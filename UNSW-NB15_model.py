@@ -1,10 +1,24 @@
+import os
 import tensorflow as tf
 import pandas as pd
+import argparse
+from collections import Counter
 from tensorflow import keras
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
 RANDOM = 42
+
+# Get Dataset path
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--dataset",
+    required=True,
+    help="Path to the dataset folder"
+)
+
+args = parser.parse_args()
+DATASET_FOLDER = args.dataset
 
 # Load Data
 DATASET_FOLDER = 'data/UNSW-NB15'
@@ -18,7 +32,7 @@ CATEGORY_COLS = ['proto', 'service', 'state']
 
 # Data Split
 train_data, temp_data = train_test_split(data, test_size=0.3, stratify=data['attack_cat'], random_state=RANDOM)
-val_data, test_data = train_test_split(temp_data, test_size=0.5, stratify=data['attack_cat'], random_state=RANDOM)
+val_data, test_data = train_test_split(temp_data, test_size=0.5, stratify=temp_data['attack_cat'], random_state=RANDOM)
 
 train_features = train_data.drop(columns=LABEL_COLS + ID_COLS)
 val_features = val_data.drop(columns=LABEL_COLS + ID_COLS)

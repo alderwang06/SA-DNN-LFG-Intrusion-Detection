@@ -28,7 +28,7 @@ dataset = []
 for filename in os.listdir(DATASET_FOLDER):
     if filename.endswith('.csv'):
         print("Loading:", filename)
-        datafile = pd.read_csv(os.path.join(DATASET_FOLDER + filename), low_memory=False)
+        datafile = pd.read_csv(os.path.join(DATASET_FOLDER + filename), low_memory=False) # need to add oversampling/understampling here i think?
         print("Loaded:", datafile.shape)
         dataset.append(datafile)
 

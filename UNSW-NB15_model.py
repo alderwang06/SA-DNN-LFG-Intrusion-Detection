@@ -1,8 +1,10 @@
+import numpy as np
 import pandas as pd
 import argparse
 from tensorflow import keras
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.metrics import classification_report, confusion_matrix
 
 RANDOM = 42
 
@@ -70,6 +72,9 @@ test_features[numeric] = scaler.transform(test_features[numeric])
 
 print(f'Train: {train_features.shape}  Val: {val_features.shape}  Test: {test_features.shape}')
 
+print(train_features.columns.tolist())
+print(len(train_features.columns))
+
 # SA-DNN Model Architecture
 label_encoder = LabelEncoder()
 label_encoder.fit(train_label['attack_cat'])
@@ -134,3 +139,10 @@ history = model.fit(
 
 test_loss, test_accuracy = model.evaluate(test_features.values, test_label_onehot)
 print(f'Test Loss: {test_loss:.4f}  Test Accuracy: {test_accuracy:.4f}')
+
+y_pred = model.predict(test_features.values)
+y_pred_classes = np.argmax(y_pred, axis=1)
+y_true_classes = np.argmax(test_label_onehot, axis=1)
+
+print(classification_report(y_true_classes, y_pred_classes, target_names=label_encoder.classes_))
+print(confusion_matrix(y_true_classes, y_pred_classes))

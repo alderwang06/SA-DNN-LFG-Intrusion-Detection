@@ -40,6 +40,8 @@ train_label = train_data[LABEL_COLS]
 val_label = val_data[LABEL_COLS]
 test_label = test_data[LABEL_COLS]
 
+# Need to oversample
+
 # Data Preprocessing
 encoders = {} # Encode categorical features into vectors
 for col in CATEGORY_COLS:

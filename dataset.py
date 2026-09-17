@@ -1,3 +1,5 @@
+# Count labels for each dataset
+
 import os
 import pandas as pd
 import argparse

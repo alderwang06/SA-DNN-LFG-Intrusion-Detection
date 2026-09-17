@@ -1,4 +1,3 @@
-import os
 import argparse
 import ipaddress
 import keras
@@ -9,71 +8,27 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from imblearn.over_sampling import RandomOverSampler
 from sklearn.metrics import classification_report, confusion_matrix
 
+import sa_dnn_lfg
 
 RANDOM = 42
 TARGET = 10_000 # 10k samples per class
 
-# Get Dataset path
+# Get sampled dataset path (produced by Bot-IoT_datasample.py)
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "--dataset",
     required=True,
-    help="Path to the dataset folder"
+    help="Path to the sampled Bot-IoT CSV file"
 )
 
 args = parser.parse_args()
-DATASET_FOLDER = args.dataset
+DATASET_PATH = args.dataset
 
-DROP_COLS = ['pkSeqID', 'seq', 'subcategory', 'stime', 'ltime']
 LABEL_COLS = ['attack', 'category']
 CATEGORY_COLS = ['proto', 'state', 'flgs']
 CLASSES = ['Reconnaissance', 'Normal', 'DoS', 'Theft', 'DDoS']
 
-# Data Sampling (Need to change undersampling technique)
-samples = {c: [] for c in CLASSES}
-counts = {c: 0 for c in CLASSES}
-
-for filename in os.listdir(DATASET_FOLDER):
-    if not filename.endswith('.csv'):
-        continue
-
-    filepath = os.path.join(DATASET_FOLDER, filename)
-    print("Loading:", filename)
-
-    for chunk in pd.read_csv(filepath, chunksize=100_000, low_memory=False):
-        chunk.columns = chunk.columns.str.strip()
-        chunk = chunk.drop(columns=DROP_COLS, errors='ignore')
-
-        for category in CLASSES:
-            if counts[category] >= TARGET:
-                continue
-
-            class_data = chunk[
-                chunk['category'] == category
-            ]
-
-            if len(class_data) == 0:
-                continue
-
-            remaining = TARGET - counts[category]
-
-            if len(class_data) > remaining:
-                class_data = class_data.sample(n=remaining, random_state=RANDOM)
-
-            samples[category].append(class_data)
-            counts[category] += len(class_data)
-
-    print("Current counts:", counts)
-
-    # Stop reading files once every class hits 10k
-    if all(counts[c] >= TARGET for c in CLASSES):
-        break
-
-data = pd.concat( # Combine all samples
-    [pd.concat(samples[c], ignore_index=True)
-    for c in CLASSES],
-    ignore_index=True
-)
+data = pd.read_csv(DATASET_PATH, low_memory=False)
 
 # Data Split 70/15/15
 train_data, temp_data = train_test_split(data, test_size=0.30, stratify=data['category'], random_state=RANDOM)
@@ -214,7 +169,7 @@ test_features[numeric] = scaler.transform(test_features[numeric])
 
 print(f'Train: {train_features.shape}  Val: {val_features.shape}  Test: {test_features.shape}')
 
-# SA-DNN Model Architecture
+# Label Encoding
 label_encoder = LabelEncoder()
 label_encoder.fit(train_label)
 
@@ -230,37 +185,8 @@ test_label_onehot = keras.utils.to_categorical(test_label_enc, num_classes=num_c
 
 input_dim = train_features.shape[1]
 
-
-inputs = keras.Input(shape=(input_dim,))
-x = keras.layers.Dense(128, activation='relu')(inputs)
-x = keras.layers.Dropout(0.3)(x)
-x = keras.layers.Dense(64, activation='relu')(x)
-x = keras.layers.Dropout(0.3)(x)
-x = keras.layers.Dense(32, activation='relu')(x)
-x = keras.layers.Dropout(0.3)(x)
-
-attn_input = keras.layers.Reshape((32, 1))(x)
-attn_output = keras.layers.MultiHeadAttention(num_heads=4, key_dim=16, value_dim=16, output_shape=16)(attn_input, attn_input, attn_input)
-attn_output = keras.layers.Flatten()(attn_output)
-
-ff = keras.layers.Dense(64, activation='relu')(attn_output)
-ff = keras.layers.LayerNormalization()(ff)
-
-# Learnable Feature Gating
-gate = keras.layers.Dense(64, activation='sigmoid')(ff)
-gated = keras.layers.Multiply()([gate, ff])
-
-bn = keras.layers.BatchNormalization()(gated)
-
-clf = keras.layers.Dense(16, activation='relu')(bn)
-outputs = keras.layers.Dense(num_classes, activation='softmax')(clf)
-
-model = keras.Model(inputs=inputs, outputs=outputs)
-model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=5e-4),
-    loss='categorical_crossentropy',
-    metrics=['accuracy']
-)
+# Train Model
+model = sa_dnn_lfg.build_model(input_dim, num_classes)
 model.summary()
 
 callbacks = [

@@ -6,6 +6,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import classification_report, confusion_matrix
 
+import sa_dnn_lfg
+
 RANDOM = 42
 
 # Get Dataset path
@@ -77,7 +79,7 @@ print(f'Train: {train_features.shape}  Val: {val_features.shape}  Test: {test_fe
 print(train_features.columns.tolist())
 print(len(train_features.columns))
 
-# SA-DNN Model Architecture
+# Label Encoding
 label_encoder = LabelEncoder()
 label_encoder.fit(train_label['attack_cat'])
 
@@ -93,37 +95,8 @@ test_label_onehot = keras.utils.to_categorical(test_label_enc, num_classes=num_c
 
 input_dim = train_features.shape[1]
 
-
-inputs = keras.Input(shape=(input_dim,))
-x = keras.layers.Dense(128, activation='relu')(inputs)
-x = keras.layers.Dropout(0.3)(x)
-x = keras.layers.Dense(64, activation='relu')(x)
-x = keras.layers.Dropout(0.3)(x)
-x = keras.layers.Dense(32, activation='relu')(x)
-x = keras.layers.Dropout(0.3)(x)
-
-attn_input = keras.layers.Reshape((32, 1))(x)
-attn_output = keras.layers.MultiHeadAttention(num_heads=4, key_dim=16, value_dim=16, output_shape=16)(attn_input, attn_input, attn_input)
-attn_output = keras.layers.Flatten()(attn_output)
-
-ff = keras.layers.Dense(64, activation='relu')(attn_output)
-ff = keras.layers.LayerNormalization()(ff)
-
-# Learnable Feature Gating
-gate = keras.layers.Dense(64, activation='sigmoid')(ff)
-gated = keras.layers.Multiply()([gate, ff])
-
-bn = keras.layers.BatchNormalization()(gated)
-
-clf = keras.layers.Dense(16, activation='relu')(bn)
-outputs = keras.layers.Dense(num_classes, activation='softmax')(clf)
-
-model = keras.Model(inputs=inputs, outputs=outputs)
-model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=5e-4),
-    loss='categorical_crossentropy',
-    metrics=['accuracy']
-)
+# Train Model
+model = sa_dnn_lfg.build_model(input_dim, num_classes)
 model.summary()
 
 callbacks = [

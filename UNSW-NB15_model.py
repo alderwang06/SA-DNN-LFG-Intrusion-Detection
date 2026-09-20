@@ -67,7 +67,7 @@ for col in CATEGORY_COLS:
 
     encoders[col] = le
 
-numeric = train_features.drop(columns=CATEGORY_COLS).columns
+numeric = train_features.columns  # includes the now label-encoded CATEGORY_COLS
 
 scaler = StandardScaler() # Scale numerical features
 train_features[numeric] = scaler.fit_transform(train_features[numeric])

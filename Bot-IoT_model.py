@@ -1,5 +1,4 @@
 import argparse
-import ipaddress
 import keras
 import numpy as np
 import pandas as pd
@@ -12,6 +11,8 @@ import sa_dnn_lfg
 
 RANDOM = 42
 TARGET = 10_000 # 10k samples per class
+TOP_K_FEATURES = 20  # correlation-based feature selection target
+REDUNDANCY_THRESHOLD = 0.95  # drop features this correlated with an already-kept feature
 
 # Get sampled dataset path (produced by Bot-IoT_datasample.py)
 parser = argparse.ArgumentParser()
@@ -73,6 +74,16 @@ train_features, train_label = ros.fit_resample(train_features, train_label)
 print("\nPost-resample TRAIN class counts:")
 print(train_label.value_counts())
 
+# Label Encoding (done early so it's available for correlation-based feature selection)
+label_encoder = LabelEncoder()
+label_encoder.fit(train_label)
+
+train_label_enc = label_encoder.transform(train_label)
+val_label_enc = label_encoder.transform(val_label)
+test_label_enc = label_encoder.transform(test_label)
+
+num_classes = len(label_encoder.classes_)
+
 # Data Preprocessing
 encoders = {} # Encode categorical features
 for col in CATEGORY_COLS:
@@ -108,49 +119,14 @@ def parse_port(x):
     except (ValueError, TypeError):
         return np.nan
 
-def ip_features(x, prefix):
-    try:
-        ip = ipaddress.ip_address(str(x).strip())
-
-        return pd.Series({
-            f'{prefix}_private': int(ip.is_private),
-            f'{prefix}_loopback': int(ip.is_loopback),
-            f'{prefix}_multicast': int(ip.is_multicast),
-            f'{prefix}_first_octet': int(str(ip).split('.')[0]),
-        })
-
-    except (ValueError, TypeError):
-        return pd.Series({
-            f'{prefix}_private': np.nan,
-            f'{prefix}_loopback': np.nan,
-            f'{prefix}_multicast': np.nan,
-            f'{prefix}_first_octet': np.nan,
-        })
-
-def add_ip_features(df):
-    saddr_features = df['saddr'].apply(
-        lambda x: ip_features(x, 'saddr')
-    )
-    daddr_features = df['daddr'].apply(
-        lambda x: ip_features(x, 'daddr')
-    )
-    df = pd.concat(
-        [
-            df.drop(columns=['saddr', 'daddr']),
-            saddr_features,
-            daddr_features
-        ],
-        axis=1
-    )
-    return df
-
 for df in [train_features, val_features, test_features]:
     df['sport'] = df['sport'].apply(parse_port)
     df['dport'] = df['dport'].apply(parse_port)
 
-train_features = add_ip_features(train_features)
-val_features = add_ip_features(val_features)
-test_features = add_ip_features(test_features)
+# Raw IP addresses are identifiers, not generalizable statistical features
+train_features = train_features.drop(columns=['saddr', 'daddr'])
+val_features = val_features.drop(columns=['saddr', 'daddr'])
+test_features = test_features.drop(columns=['saddr', 'daddr'])
 
 numeric = train_features.select_dtypes(include=np.number).columns
 
@@ -161,6 +137,34 @@ train_features = train_features.fillna(0)
 val_features = val_features.fillna(0)
 test_features = test_features.fillna(0)
 
+# Correlation-based Feature Selection
+def select_features_by_correlation(X, y, top_k, redundancy_threshold):
+    corr_matrix = X.corr().abs()
+    target_corr = X.apply(lambda col: col.corr(pd.Series(y, index=X.index))).abs().fillna(0)
+    ranked = target_corr.sort_values(ascending=False).index.tolist()
+
+    selected = []
+    for feature in ranked:
+        if any(corr_matrix.loc[feature, kept] > redundancy_threshold for kept in selected):
+            continue
+        selected.append(feature)
+        if len(selected) >= top_k:
+            break
+
+    return selected
+
+selected_features = select_features_by_correlation(
+    train_features, train_label_enc, TOP_K_FEATURES, REDUNDANCY_THRESHOLD
+)
+print(f"\nSelected {len(selected_features)} features via correlation-based selection:")
+print(selected_features)
+
+train_features = train_features[selected_features]
+val_features = val_features[selected_features]
+test_features = test_features[selected_features]
+
+numeric = train_features.columns
+
 # Data Scaling
 scaler = StandardScaler()
 train_features[numeric] = scaler.fit_transform(train_features[numeric])
@@ -168,16 +172,6 @@ val_features[numeric] = scaler.transform(val_features[numeric])
 test_features[numeric] = scaler.transform(test_features[numeric])
 
 print(f'Train: {train_features.shape}  Val: {val_features.shape}  Test: {test_features.shape}')
-
-# Label Encoding
-label_encoder = LabelEncoder()
-label_encoder.fit(train_label)
-
-train_label_enc = label_encoder.transform(train_label)
-val_label_enc = label_encoder.transform(val_label)
-test_label_enc = label_encoder.transform(test_label)
-
-num_classes = len(label_encoder.classes_)
 
 train_label_onehot = keras.utils.to_categorical(train_label_enc, num_classes=num_classes)
 val_label_onehot = keras.utils.to_categorical(val_label_enc, num_classes=num_classes)

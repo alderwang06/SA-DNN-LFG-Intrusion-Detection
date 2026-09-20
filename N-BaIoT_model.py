@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.ensemble import RandomForestClassifier
 from imblearn.over_sampling import RandomOverSampler
 from sklearn.metrics import classification_report, confusion_matrix
 
@@ -11,6 +12,7 @@ import sa_dnn_lfg
 
 RANDOM = 42
 TARGET = 100_000  # 100k samples per class
+TOP_K_FEATURES = 20  # Random Forest-based feature selection target
 
 # Get Dataset path
 parser = argparse.ArgumentParser()
@@ -69,6 +71,22 @@ train_features = train_features.fillna(0)
 val_features = val_features.fillna(0)
 test_features = test_features.fillna(0)
 
+# Random Forest-based Feature Selection
+rf_selector = RandomForestClassifier(n_estimators=200, random_state=RANDOM, n_jobs=-1)
+rf_selector.fit(train_features[numeric], train_label)
+
+importances = pd.Series(rf_selector.feature_importances_, index=numeric).sort_values(ascending=False)
+selected_features = importances.head(TOP_K_FEATURES).index.tolist()
+
+print(f"\nSelected {len(selected_features)} features via Random Forest importance:")
+print(selected_features)
+
+train_features = train_features[selected_features]
+val_features = val_features[selected_features]
+test_features = test_features[selected_features]
+
+numeric = train_features.columns
+
 # Data Scaling
 scaler = StandardScaler()
 train_features[numeric] = scaler.fit_transform(train_features[numeric])
@@ -98,7 +116,7 @@ model = sa_dnn_lfg.build_model(input_dim, num_classes)
 model.summary()
 
 callbacks = [
-    keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+    keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
 ]
 
 history = model.fit(

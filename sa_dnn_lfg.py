@@ -5,7 +5,7 @@ NUM_ATTENTION_HEADS = 4
 LEARNING_RATE = 5e-4
 INITIALIZER = 'glorot_uniform'  # Xavier weight initialization
 
-def build_model(input_dim, num_classes):
+def _build(input_dim, num_classes, use_lfg):
     inputs = keras.Input(shape=(input_dim,))
     x = keras.layers.Dense(128, activation='relu', kernel_initializer=INITIALIZER)(inputs)
     x = keras.layers.Dropout(DROPOUT_RATE)(x)
@@ -24,11 +24,12 @@ def build_model(input_dim, num_classes):
     ff = keras.layers.Dense(64, activation='relu', kernel_initializer=INITIALIZER)(attn_output)
     ff = keras.layers.LayerNormalization()(ff)
 
-    # Learnable Feature Gating
-    gate = keras.layers.Dense(64, activation='sigmoid', kernel_initializer=INITIALIZER)(ff)
-    gated = keras.layers.Multiply()([gate, ff])
+    if use_lfg:
+        # Learnable Feature Gating
+        gate = keras.layers.Dense(64, activation='sigmoid', kernel_initializer=INITIALIZER)(ff)
+        ff = keras.layers.Multiply()([gate, ff])
 
-    bn = keras.layers.BatchNormalization()(gated)
+    bn = keras.layers.BatchNormalization()(ff)
 
     clf = keras.layers.Dense(16, activation='relu', kernel_initializer=INITIALIZER)(bn)
     outputs = keras.layers.Dense(num_classes, activation='softmax', kernel_initializer=INITIALIZER)(clf)
@@ -40,3 +41,12 @@ def build_model(input_dim, num_classes):
         metrics=['accuracy']
     )
     return model
+
+
+def build_model(input_dim, num_classes):
+    return _build(input_dim, num_classes, use_lfg=True)
+
+
+def build_model_no_lfg(input_dim, num_classes):
+    """SA-DNN without the Learnable Feature Gating layer, for the paper's ablation comparison."""
+    return _build(input_dim, num_classes, use_lfg=False)

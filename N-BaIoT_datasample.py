@@ -1,6 +1,7 @@
 import os
 import re
 import argparse
+import numpy as np
 import pandas as pd
 
 RANDOM = 42
@@ -29,6 +30,7 @@ CLASSES = [
 ]
 
 LABEL_PATTERN = re.compile(r'^\d+\.(.+)\.csv$')
+KEY_COL = '_reservoir_key'
 
 def parse_label(filename):
     match = LABEL_PATTERN.match(filename)
@@ -36,11 +38,18 @@ def parse_label(filename):
         return None
     return match.group(1).replace('.', '_')
 
-# Data Sampling
-samples = {c: [] for c in CLASSES}
-counts = {c: 0 for c in CLASSES}
+rng = np.random.default_rng(RANDOM)
 
-for filename in os.listdir(DATASET_FOLDER):
+# Data Sampling: each label is spread across multiple per-device files
+# (e.g. 1.mirai.udp.csv ... 9.mirai.udp.csv). Reservoir sampling streams
+# through every device's file for a label and keeps a uniform random sample
+# of up to TARGET rows, so the result isn't biased toward whichever device
+# happens to be listed first (and stops short of TARGET, unsampled, once
+# the earliest-listed devices alone satisfy it).
+reservoirs = {c: None for c in CLASSES}
+seen = {c: 0 for c in CLASSES}
+
+for filename in sorted(os.listdir(DATASET_FOLDER)):
     if not filename.endswith('.csv'):
         continue
 
@@ -48,34 +57,42 @@ for filename in os.listdir(DATASET_FOLDER):
     if label not in CLASSES:
         continue
 
-    if counts[label] >= TARGET:
-        continue
-
     filepath = os.path.join(DATASET_FOLDER, filename)
     print("Loading:", filename, "-> label:", label)
 
     for chunk in pd.read_csv(filepath, chunksize=100_000, low_memory=False):
-        if counts[label] >= TARGET:
-            break
-
         chunk.columns = chunk.columns.str.strip()
         chunk['label'] = label
 
-        remaining = TARGET - counts[label]
+        seen[label] += len(chunk)
+        chunk[KEY_COL] = rng.random(len(chunk))
 
-        if len(chunk) > remaining:
-            chunk = chunk.sample(n=remaining, random_state=RANDOM)
+        combined = chunk if reservoirs[label] is None else pd.concat(
+            [reservoirs[label], chunk], ignore_index=True
+        )
+        if len(combined) > TARGET:
+            combined = combined.nlargest(TARGET, KEY_COL)
+        reservoirs[label] = combined
 
-        samples[label].append(chunk)
-        counts[label] += len(chunk)
+    print("Rows seen so far:", seen)
 
-    print("Current counts:", counts)
+# Any class whose raw population is below TARGET gets randomly oversampled
+# (with replacement) up to TARGET, matching classes that were undersampled.
+parts = []
+for label in CLASSES:
+    if reservoirs[label] is None:
+        print(f"Warning: no rows found for label {label}, skipping")
+        continue
 
-data = pd.concat(  # Combine all samples
-    [pd.concat(samples[c], ignore_index=True)
-    for c in CLASSES if samples[c]],
-    ignore_index=True
-)
+    pool = reservoirs[label].drop(columns=[KEY_COL])
+
+    if len(pool) < TARGET:
+        print(f"{label}: only {len(pool)} raw rows, oversampling to {TARGET}")
+        pool = pool.sample(n=TARGET, replace=True, random_state=RANDOM)
+
+    parts.append(pool)
+
+data = pd.concat(parts, ignore_index=True)
 
 print("\nSampled dataset:")
 print(data.shape)

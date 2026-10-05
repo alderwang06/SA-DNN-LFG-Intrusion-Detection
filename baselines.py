@@ -117,7 +117,7 @@ def _train_keras_baseline(build_fn, name, input_dim, num_classes,
         X_train, y_train_onehot,
         validation_data=(X_val, y_val_onehot),
         epochs=epochs, batch_size=batch_size,
-        callbacks=callbacks, verbose=0,
+        callbacks=callbacks, verbose=2,
     )
     train_time = time.time() - start
 

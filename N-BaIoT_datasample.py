@@ -19,9 +19,17 @@ parser.add_argument(
     default="data/N-BaIoT_sampled.csv",
     help="Path to write the sampled CSV"
 )
+parser.add_argument(
+    "--device",
+    default="1",
+    help="N-BaIoT device ID to sample from (default 1 = Danmini_Doorbell, "
+         "matching the paper, which trains/evaluates on this single device "
+         "rather than pooling traffic across all 9 devices)"
+)
 
 args = parser.parse_args()
 DATASET_FOLDER = args.dataset
+DEVICE = args.device
 
 CLASSES = [
     'benign',
@@ -29,23 +37,22 @@ CLASSES = [
     'mirai_ack', 'mirai_scan', 'mirai_syn', 'mirai_udp', 'mirai_udpplain'
 ]
 
-LABEL_PATTERN = re.compile(r'^\d+\.(.+)\.csv$')
+LABEL_PATTERN = re.compile(r'^(\d+)\.(.+)\.csv$')
 KEY_COL = '_reservoir_key'
 
-def parse_label(filename):
+def parse_device_and_label(filename):
     match = LABEL_PATTERN.match(filename)
     if not match:
-        return None
-    return match.group(1).replace('.', '_')
+        return None, None
+    return match.group(1), match.group(2).replace('.', '_')
 
 rng = np.random.default_rng(RANDOM)
 
-# Data Sampling: each label is spread across multiple per-device files
-# (e.g. 1.mirai.udp.csv ... 9.mirai.udp.csv). Reservoir sampling streams
-# through every device's file for a label and keeps a uniform random sample
-# of up to TARGET rows, so the result isn't biased toward whichever device
-# happens to be listed first (and stops short of TARGET, unsampled, once
-# the earliest-listed devices alone satisfy it).
+# Data Sampling: restricted to a single device's files (see --device), since
+# the paper trains/evaluates on one device (Danmini Doorbell) rather than
+# pooling traffic across all 9 N-BaIoT devices. Reservoir sampling keeps a
+# uniform random sample of up to TARGET rows per label from that device's
+# file.
 reservoirs = {c: None for c in CLASSES}
 seen = {c: 0 for c in CLASSES}
 
@@ -53,8 +60,8 @@ for filename in sorted(os.listdir(DATASET_FOLDER)):
     if not filename.endswith('.csv'):
         continue
 
-    label = parse_label(filename)
-    if label not in CLASSES:
+    device_id, label = parse_device_and_label(filename)
+    if device_id != DEVICE or label not in CLASSES:
         continue
 
     filepath = os.path.join(DATASET_FOLDER, filename)

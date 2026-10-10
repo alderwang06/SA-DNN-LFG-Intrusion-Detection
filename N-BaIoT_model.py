@@ -1,3 +1,4 @@
+import os
 import time
 
 import argparse
@@ -154,6 +155,12 @@ y_true_classes = np.argmax(test_label_onehot, axis=1)
 print(classification_report(y_true_classes, y_pred_classes, target_names=label_encoder.classes_))
 print(confusion_matrix(y_true_classes, y_pred_classes))
 
+os.makedirs(args.baseline_dir, exist_ok=True)
+baselines.save_confusion_matrix(
+    y_true_classes, y_pred_classes, label_encoder.classes_,
+    os.path.join(args.baseline_dir, f"{DATASET_NAME}_confusion_matrix_SA-DNN-LFG.csv"),
+)
+
 precision_macro, recall_macro, f1_macro, _ = precision_recall_fscore_support(
     y_true_classes, y_pred_classes, average='macro', zero_division=0
 )
@@ -198,6 +205,11 @@ if not args.no_baselines:
         'train_time_s': no_lfg_train_time_s,
         'inference_ms_per_sample': no_lfg_inference_ms_per_sample,
     }
+
+    baselines.save_confusion_matrix(
+        y_true_classes, no_lfg_y_pred_classes, label_encoder.classes_,
+        os.path.join(args.baseline_dir, f"{DATASET_NAME}_confusion_matrix_SA-DNN_no-LFG.csv"),
+    )
 
     baselines.run_comparison(
         dataset_name=DATASET_NAME,

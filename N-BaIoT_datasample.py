@@ -76,23 +76,52 @@ for filename in sorted(os.listdir(DATASET_FOLDER)):
 
     print("Rows seen so far:", seen)
 
-# Any class whose raw population is below TARGET gets randomly oversampled
-# (with replacement) up to TARGET, matching classes that were undersampled.
-parts = []
+# Split each class's deduplicated pool into train/val/test *before* any
+# oversampling, then oversample (with replacement, up to the paper's target)
+# independently within each split. A duplicated row can then only ever land
+# back in the split it was duplicated from, so no row can appear in both
+# train and test (the previous oversample-then-split order allowed that,
+# which let models like Random Forest "memorize" test rows they'd also
+# seen, exact duplicate, in training).
+SPLIT_RATIOS = {'train': 0.70, 'val': 0.15, 'test': 0.15}
+SPLIT_TARGETS = {
+    'train': round(TARGET * SPLIT_RATIOS['train']),
+    'val': round(TARGET * SPLIT_RATIOS['val']),
+}
+SPLIT_TARGETS['test'] = TARGET - SPLIT_TARGETS['train'] - SPLIT_TARGETS['val']
+
+parts = {split: [] for split in SPLIT_RATIOS}
 for label in CLASSES:
     if reservoirs[label] is None:
         print(f"Warning: no rows found for label {label}, skipping")
         continue
 
     pool = reservoirs[label].drop(columns=[KEY_COL])
+    # Drop exact-duplicate raw rows (e.g. repetitive benign heartbeat traffic)
+    # before splitting, so a duplicate that already existed in the raw data
+    # can't get scattered across train/val/test by chance.
+    pool = pool.drop_duplicates().reset_index(drop=True)
+    pool = pool.sample(frac=1, random_state=RANDOM).reset_index(drop=True)
 
-    if len(pool) < TARGET:
-        print(f"{label}: only {len(pool)} raw rows, oversampling to {TARGET}")
-        pool = pool.sample(n=TARGET, replace=True, random_state=RANDOM)
+    n_train = int(round(len(pool) * SPLIT_RATIOS['train']))
+    n_val = int(round(len(pool) * SPLIT_RATIOS['val']))
+    raw_splits = {
+        'train': pool.iloc[:n_train],
+        'val': pool.iloc[n_train:n_train + n_val],
+        'test': pool.iloc[n_train + n_val:],
+    }
 
-    parts.append(pool)
+    for split, split_df in raw_splits.items():
+        target = SPLIT_TARGETS[split]
+        if len(split_df) != target:
+            print(f"{label}/{split}: {len(split_df)} raw rows, resampling to {target}")
+            split_df = split_df.sample(n=target, replace=len(split_df) < target, random_state=RANDOM)
+        parts[split].append(split_df)
 
-data = pd.concat(parts, ignore_index=True)
+data = pd.concat(
+    [df.assign(split=split) for split, dfs in parts.items() for df in dfs],
+    ignore_index=True,
+)
 
 print("\nSampled dataset:")
 print(data.shape)

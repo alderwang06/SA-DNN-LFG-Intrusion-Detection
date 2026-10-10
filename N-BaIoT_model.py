@@ -4,7 +4,6 @@ import argparse
 import numpy as np
 import pandas as pd
 from tensorflow import keras
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
@@ -48,9 +47,11 @@ print("\nLoaded dataset:")
 print(data.shape)
 print(data['label'].value_counts())
 
-# Data Split 70/15/15
-train_data, temp_data = train_test_split(data, test_size=0.30, stratify=data['label'], random_state=RANDOM)
-val_data, test_data = train_test_split(temp_data, test_size=0.50, stratify=temp_data['label'], random_state=RANDOM)
+# Data Split 70/15/15: N-BaIoT_datasample.py already assigns each row to a
+# split (before oversampling, so no row can appear in more than one split).
+train_data = data[data['split'] == 'train'].drop(columns=['split'])
+val_data = data[data['split'] == 'val'].drop(columns=['split'])
+test_data = data[data['split'] == 'test'].drop(columns=['split'])
 
 print("\nClass counts after split:")
 print("Train:")

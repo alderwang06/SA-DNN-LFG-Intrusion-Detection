@@ -6,12 +6,15 @@ import time
 
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from tensorflow import keras
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import precision_recall_fscore_support, accuracy_score
+from sklearn.metrics import precision_recall_fscore_support, accuracy_score, confusion_matrix
 
 RANDOM = 42
 SVM_MAX_TRAIN_SAMPLES = 20_000  # SVC is O(n^2)-O(n^3); cap so it stays tractable on large datasets
@@ -62,6 +65,43 @@ def build_bilstm_attention(input_dim, num_classes):
     model = keras.Model(inputs, outputs)
     model.compile(optimizer=keras.optimizers.Adam(1e-3), loss='categorical_crossentropy', metrics=['accuracy'])
     return model
+
+
+def save_confusion_matrix(y_true, y_pred, class_names, path):
+    cm = confusion_matrix(y_true, y_pred, labels=range(len(class_names)))
+    df = pd.DataFrame(cm, index=class_names, columns=class_names)
+    df.to_csv(path)
+    print(f"Saved confusion matrix to {path}")
+    return df
+
+
+def _save_comparison_table_image(df, dataset_name, path):
+    display_df = df.copy()
+    for col in display_df.columns:
+        if col != 'model':
+            display_df[col] = display_df[col].map(lambda v: f"{v:.4f}")
+
+    fig, ax = plt.subplots(figsize=(1.7 * len(display_df.columns), 0.45 * (len(display_df) + 1)))
+    ax.axis('off')
+    table = ax.table(
+        cellText=display_df.values,
+        colLabels=display_df.columns,
+        cellLoc='center',
+        loc='center',
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(9)
+    table.scale(1, 1.6)
+    for (row, _col), cell in table.get_celld().items():
+        if row == 0:
+            cell.set_text_props(weight='bold')
+            cell.set_facecolor('#dddddd')
+
+    ax.set_title(f"{dataset_name} — Model Comparison", fontweight='bold', pad=16)
+    fig.tight_layout()
+    fig.savefig(path, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Saved comparison table image to {path}")
 
 
 def compute_classification_metrics(y_true, y_pred):
@@ -188,4 +228,8 @@ def run_comparison(
     csv_path = os.path.join(output_dir, f"{dataset_name}_baseline_comparison.csv")
     df.to_csv(csv_path, index=False)
     print(f"Saved comparison table to {csv_path}")
+
+    png_path = os.path.join(output_dir, f"{dataset_name}_baseline_comparison.png")
+    _save_comparison_table_image(df, dataset_name, png_path)
+
     return df

@@ -1,12 +1,10 @@
 import os
 import time
-
-import argparse
 import numpy as np
 import pandas as pd
+import argparse
 from tensorflow import keras
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
 
 import sa_dnn_lfg
@@ -14,15 +12,14 @@ import baselines
 import explainability
 
 RANDOM = 42
-TOP_K_FEATURES = 20  # Random Forest-based feature selection target
-DATASET_NAME = "N-BaIoT"
+DATASET_NAME = "UNSW-NB15"
 
 # Get Dataset path
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "--dataset",
     required=True,
-    help="Path to the dataset folder"
+    help="Path to the split UNSW-NB15 CSV file (produced by UNSW-NB15_dataprep.py)"
 )
 parser.add_argument(
     "--no-baselines", action="store_true",
@@ -42,79 +39,43 @@ parser.add_argument(
 )
 
 args = parser.parse_args()
-data = pd.read_csv(args.dataset, low_memory=False)
+DATASET_PATH = args.dataset
 
-print("\nLoaded dataset:")
-print(data.shape)
-print(data['label'].value_counts())
+LABEL_COLS = ['label', 'attack_cat']
 
-# Data Split 70/15/15: N-BaIoT_datasample.py already assigns each row to a
-# split (before oversampling, so no row can appear in more than one split).
+# Get Preprocessed Data
+data = pd.read_csv(DATASET_PATH, low_memory=False)
 train_data = data[data['split'] == 'train'].drop(columns=['split'])
 val_data = data[data['split'] == 'val'].drop(columns=['split'])
 test_data = data[data['split'] == 'test'].drop(columns=['split'])
 
-print("\nClass counts after split:")
-print("Train:")
-print(train_data['label'].value_counts())
+train_features = train_data.drop(columns=LABEL_COLS)
+val_features = val_data.drop(columns=LABEL_COLS)
+test_features = test_data.drop(columns=LABEL_COLS)
 
-print("\nValidation:")
-print(val_data['label'].value_counts())
+train_label = train_data[LABEL_COLS]
+val_label = val_data[LABEL_COLS]
+test_label = test_data[LABEL_COLS]
 
-print("\nTest:")
-print(test_data['label'].value_counts())
+numeric = train_features.columns  # already encoded in UNSW-NB15_dataprep.py
 
-train_features = train_data.drop(columns=['label'])
-val_features = val_data.drop(columns=['label'])
-test_features = test_data.drop(columns=['label'])
-
-train_label = train_data['label']
-val_label = val_data['label']
-test_label = test_data['label']
-
-# Classes are already balanced per class by N-BaIoT_datasample.py before
-# this split, so no further oversampling is needed here.
-
-numeric = train_features.select_dtypes(include=np.number).columns
-
-print("NaN counts before scaling:")
-print(train_features.isna().sum()[train_features.isna().sum() > 0])
-
-train_features = train_features.fillna(0)
-val_features = val_features.fillna(0)
-test_features = test_features.fillna(0)
-
-# Random Forest-based Feature Selection
-rf_selector = RandomForestClassifier(n_estimators=200, random_state=RANDOM, n_jobs=-1)
-rf_selector.fit(train_features[numeric], train_label)
-
-importances = pd.Series(rf_selector.feature_importances_, index=numeric).sort_values(ascending=False)
-selected_features = importances.head(TOP_K_FEATURES).index.tolist()
-
-print(f"\nSelected {len(selected_features)} features via Random Forest importance:")
-print(selected_features)
-
-train_features = train_features[selected_features]
-val_features = val_features[selected_features]
-test_features = test_features[selected_features]
-
-numeric = train_features.columns
-
-# Data Scaling
-scaler = StandardScaler()
+scaler = StandardScaler() # Scale numerical features
 train_features[numeric] = scaler.fit_transform(train_features[numeric])
 val_features[numeric] = scaler.transform(val_features[numeric])
 test_features[numeric] = scaler.transform(test_features[numeric])
 
 print(f'Train: {train_features.shape}  Val: {val_features.shape}  Test: {test_features.shape}')
 
+print(train_features.columns.tolist())
+print(len(train_features.columns))
+
 # Label Encoding
 label_encoder = LabelEncoder()
-label_encoder.fit(train_label)
+label_encoder.fit(train_label['attack_cat'])
 
-train_label_enc = label_encoder.transform(train_label)
-val_label_enc = label_encoder.transform(val_label)
-test_label_enc = label_encoder.transform(test_label)
+train_label_enc = label_encoder.transform(train_label['attack_cat'])
+val_label_enc = label_encoder.transform(val_label['attack_cat'])
+test_label_enc = label_encoder.transform(test_label['attack_cat'])
 
 num_classes = len(label_encoder.classes_)
 
@@ -125,6 +86,7 @@ test_label_onehot = keras.utils.to_categorical(test_label_enc, num_classes=num_c
 input_dim = train_features.shape[1]
 
 # Train Model
+keras.utils.set_random_seed(RANDOM)  # isolate LFG vs no-LFG comparison from TF's global random state
 model = sa_dnn_lfg.build_model(input_dim, num_classes)
 model.summary()
 
@@ -158,7 +120,8 @@ print(confusion_matrix(y_true_classes, y_pred_classes))
 os.makedirs(args.baseline_dir, exist_ok=True)
 baselines.save_confusion_matrix(
     y_true_classes, y_pred_classes, label_encoder.classes_,
-    os.path.join(args.baseline_dir, f"{DATASET_NAME}_confusion_matrix_SA-DNN-LFG.csv"),
+    f"{DATASET_NAME} — SA-DNN-LFG Confusion Matrix",
+    os.path.join(args.baseline_dir, f"{DATASET_NAME}_confusion_matrix_SA-DNN-LFG.png"),
 )
 
 precision_macro, recall_macro, f1_macro, _ = precision_recall_fscore_support(
@@ -176,11 +139,12 @@ sa_dnn_lfg_metrics = {
 # Baseline Model Comparison (Logistic Regression, SVM, Random Forest, LSTM, CNN, BiLSTM+Attention)
 # + SA-DNN (no LFG) ablation, matching the paper's LFG contribution analysis
 if not args.no_baselines:
+    keras.utils.set_random_seed(RANDOM)
     no_lfg_model = sa_dnn_lfg.build_model_no_lfg(input_dim, num_classes)
     no_lfg_callbacks = [keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)]
 
     no_lfg_train_start = time.time()
-    no_lfg_model.fit(
+    no_lfg_history = no_lfg_model.fit(
         train_features.values, train_label_onehot,
         validation_data=(val_features.values, val_label_onehot),
         epochs=50, batch_size=64, callbacks=no_lfg_callbacks,
@@ -208,7 +172,13 @@ if not args.no_baselines:
 
     baselines.save_confusion_matrix(
         y_true_classes, no_lfg_y_pred_classes, label_encoder.classes_,
-        os.path.join(args.baseline_dir, f"{DATASET_NAME}_confusion_matrix_SA-DNN_no-LFG.csv"),
+        f"{DATASET_NAME} — SA-DNN (no LFG) Confusion Matrix",
+        os.path.join(args.baseline_dir, f"{DATASET_NAME}_confusion_matrix_SA-DNN_no-LFG.png"),
+    )
+
+    baselines.save_training_curves(
+        history, no_lfg_history, DATASET_NAME,
+        os.path.join(args.baseline_dir, f"{DATASET_NAME}_training_curves.png"),
     )
 
     baselines.run_comparison(
@@ -222,13 +192,26 @@ if not args.no_baselines:
         output_dir=args.baseline_dir,
     )
 
-# Explainability (SHAP + LIME)
+    # Explainability (SHAP + LIME) for the no-LFG ablation
+    if not args.no_explain:
+        explainability.explain_model(
+            model=no_lfg_model,
+            X_train=train_features.values,
+            X_test=test_features.values,
+            y_test=test_label_enc,
+            feature_names=train_features.columns.tolist(),
+            class_names=list(label_encoder.classes_),
+            output_dir=os.path.join(args.explain_dir, "SA-DNN_no-LFG"),
+        )
+
+# Explainability (SHAP + LIME) for the proposed SA-DNN-LFG model
 if not args.no_explain:
     explainability.explain_model(
         model=model,
         X_train=train_features.values,
         X_test=test_features.values,
-        feature_names=selected_features,
+        y_test=test_label_enc,
+        feature_names=train_features.columns.tolist(),
         class_names=list(label_encoder.classes_),
-        output_dir=args.explain_dir,
+        output_dir=os.path.join(args.explain_dir, "SA-DNN-LFG"),
     )

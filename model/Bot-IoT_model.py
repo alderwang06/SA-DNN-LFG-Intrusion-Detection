@@ -1,12 +1,12 @@
 import os
 import time
 
+import argparse
 import numpy as np
 import pandas as pd
-import argparse
 from tensorflow import keras
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
 
 import sa_dnn_lfg
@@ -14,14 +14,14 @@ import baselines
 import explainability
 
 RANDOM = 42
-DATASET_NAME = "UNSW-NB15"
+DATASET_NAME = "Bot-IoT"
 
-# Get Dataset path
+# Get sampled dataset path (produced by Bot-IoT_datasample.py)
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "--dataset",
     required=True,
-    help="Path to the dataset folder"
+    help="Path to the sampled Bot-IoT CSV file"
 )
 parser.add_argument(
     "--no-baselines", action="store_true",
@@ -39,77 +39,70 @@ parser.add_argument(
     "--baseline-dir", default="baseline_results",
     help="Directory to write baseline comparison CSVs to"
 )
+parser.add_argument(
+    "--leak-check-only", action="store_true",
+    help="Run only the train/test duplicate-row leakage diagnostic and exit, skipping all model training"
+)
 
 args = parser.parse_args()
-DATASET_FOLDER = args.dataset
+DATASET_PATH = args.dataset
 
-# Load Data
-data1 = pd.read_csv(DATASET_FOLDER + '/UNSW_NB15_training-set.csv')
-data2 = pd.read_csv(DATASET_FOLDER + '/UNSW_NB15_testing-set.csv')
-data = pd.concat([data1, data2], ignore_index=True)
+LABEL_COLS = ['attack', 'category']
 
-ID_COLS = ['id']
-LABEL_COLS = ['label', 'attack_cat']
-CATEGORY_COLS = ['proto', 'service', 'state']
+data = pd.read_csv(DATASET_PATH, low_memory=False)
 
-# Data Split 70/15/15
-train_data, temp_data = train_test_split(data, test_size=0.3, stratify=data['attack_cat'], random_state=RANDOM)
-val_data, test_data = train_test_split(temp_data, test_size=0.5, stratify=temp_data['attack_cat'], random_state=RANDOM)
+# Data Split 70/15/15: Bot-IoT_dataprep.py already assigns each row to a
+# split (before oversampling, so no row can appear in more than one split),
+# and already encodes/cleans features and applies CFS feature selection
+# (all fit only on the train split).
+train_data = data[data['split'] == 'train'].drop(columns=['split'])
+val_data = data[data['split'] == 'val'].drop(columns=['split'])
+test_data = data[data['split'] == 'test'].drop(columns=['split'])
 
-train_features = train_data.drop(columns=LABEL_COLS + ID_COLS)
-val_features = val_data.drop(columns=LABEL_COLS + ID_COLS)
-test_features = test_data.drop(columns=LABEL_COLS + ID_COLS)
+print("\nClass counts after split:")
+print("Train:")
+print(train_data['category'].value_counts())
 
-train_label = train_data[LABEL_COLS]
-val_label = val_data[LABEL_COLS]
-test_label = test_data[LABEL_COLS]
+print("\nValidation:")
+print(val_data['category'].value_counts())
 
-# Need to oversample (for better performance)
+print("\nTest:")
+print(test_data['category'].value_counts())
 
-# Data Preprocessing
-encoders = {} # Encode categorical features into vectors
-for col in CATEGORY_COLS:
-    le = LabelEncoder()
-    train_features[col] = train_features[col].astype(str)
-    val_features[col] = val_features[col].astype(str)
-    test_features[col] = test_features[col].astype(str)
+print("\nSampled dataset:")
+print(data.shape)
+print(data['category'].value_counts())
 
-    le.fit(train_features[col])
-    train_classes = set(le.classes_)
+train_features = train_data.drop(columns=LABEL_COLS)
+val_features = val_data.drop(columns=LABEL_COLS)
+test_features = test_data.drop(columns=LABEL_COLS)
 
-    val_features[col] = val_features[col].apply(lambda x: x if x in train_classes else '__unseen__')
-    test_features[col] = test_features[col].apply(lambda x: x if x in train_classes else '__unseen__')
+train_label = train_data['category']
+val_label = val_data['category']
+test_label = test_data['category']
 
-    if '__unseen__' not in le.classes_:
-        le.classes_ = pd.np.append(le.classes_, '__unseen__') if hasattr(pd, 'np') else __import__('numpy').append(le.classes_, '__unseen__')
+# Classes are already balanced per class by Bot-IoT_datasample.py before
+# this split, so no further oversampling is needed here.
 
-    train_features[col] = le.transform(train_features[col])
-    val_features[col] = le.transform(val_features[col])
-    test_features[col] = le.transform(test_features[col])
+# Label Encoding (done early so it's available for correlation-based feature selection)
+label_encoder = LabelEncoder()
+label_encoder.fit(train_label)
 
-    encoders[col] = le
+train_label_enc = label_encoder.transform(train_label)
+val_label_enc = label_encoder.transform(val_label)
+test_label_enc = label_encoder.transform(test_label)
 
-numeric = train_features.columns  # includes the now label-encoded CATEGORY_COLS
+num_classes = len(label_encoder.classes_)
 
-scaler = StandardScaler() # Scale numerical features
+numeric = train_features.columns  # already encoded/cleaned/CFS-selected in Bot-IoT_dataprep.py
+
+# Data Scaling
+scaler = StandardScaler()
 train_features[numeric] = scaler.fit_transform(train_features[numeric])
 val_features[numeric] = scaler.transform(val_features[numeric])
 test_features[numeric] = scaler.transform(test_features[numeric])
 
 print(f'Train: {train_features.shape}  Val: {val_features.shape}  Test: {test_features.shape}')
-
-print(train_features.columns.tolist())
-print(len(train_features.columns))
-
-# Label Encoding
-label_encoder = LabelEncoder()
-label_encoder.fit(train_label['attack_cat'])
-
-train_label_enc = label_encoder.transform(train_label['attack_cat'])
-val_label_enc = label_encoder.transform(val_label['attack_cat'])
-test_label_enc = label_encoder.transform(test_label['attack_cat'])
-
-num_classes = len(label_encoder.classes_)
 
 train_label_onehot = keras.utils.to_categorical(train_label_enc, num_classes=num_classes)
 val_label_onehot = keras.utils.to_categorical(val_label_enc, num_classes=num_classes)
@@ -117,7 +110,23 @@ test_label_onehot = keras.utils.to_categorical(test_label_enc, num_classes=num_c
 
 input_dim = train_features.shape[1]
 
+# Data leakage diagnostic: check whether any post-preprocessing test rows
+# exactly match a train row, and whether RF accuracy differs between the two.
+train_keys = set(map(tuple, np.round(train_features.values, 6)))
+test_rows = np.round(test_features.values, 6)
+in_train = np.array([tuple(r) in train_keys for r in test_rows])
+print("unique test rows:", len(set(map(tuple, test_rows))), "of", len(test_rows))
+print("test rows exactly in train:", in_train.mean())
+rf = RandomForestClassifier(n_estimators=200, random_state=RANDOM, n_jobs=-1).fit(train_features.values, train_label_enc)
+rf_pred = rf.predict(test_features.values)
+print("RF acc, rows seen in train:", (rf_pred[in_train] == test_label_enc[in_train]).mean())
+print("RF acc, rows not in train:", (rf_pred[~in_train] == test_label_enc[~in_train]).mean())
+
+if args.leak_check_only:
+    raise SystemExit(0)
+
 # Train Model
+keras.utils.set_random_seed(RANDOM)  # isolate LFG vs no-LFG comparison from TF's global random state
 model = sa_dnn_lfg.build_model(input_dim, num_classes)
 model.summary()
 
@@ -151,7 +160,8 @@ print(confusion_matrix(y_true_classes, y_pred_classes))
 os.makedirs(args.baseline_dir, exist_ok=True)
 baselines.save_confusion_matrix(
     y_true_classes, y_pred_classes, label_encoder.classes_,
-    os.path.join(args.baseline_dir, f"{DATASET_NAME}_confusion_matrix_SA-DNN-LFG.csv"),
+    f"{DATASET_NAME} — SA-DNN-LFG Confusion Matrix",
+    os.path.join(args.baseline_dir, f"{DATASET_NAME}_confusion_matrix_SA-DNN-LFG.png"),
 )
 
 precision_macro, recall_macro, f1_macro, _ = precision_recall_fscore_support(
@@ -169,11 +179,12 @@ sa_dnn_lfg_metrics = {
 # Baseline Model Comparison (Logistic Regression, SVM, Random Forest, LSTM, CNN, BiLSTM+Attention)
 # + SA-DNN (no LFG) ablation, matching the paper's LFG contribution analysis
 if not args.no_baselines:
+    keras.utils.set_random_seed(RANDOM)
     no_lfg_model = sa_dnn_lfg.build_model_no_lfg(input_dim, num_classes)
     no_lfg_callbacks = [keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)]
 
     no_lfg_train_start = time.time()
-    no_lfg_model.fit(
+    no_lfg_history = no_lfg_model.fit(
         train_features.values, train_label_onehot,
         validation_data=(val_features.values, val_label_onehot),
         epochs=50, batch_size=64, callbacks=no_lfg_callbacks,
@@ -201,7 +212,13 @@ if not args.no_baselines:
 
     baselines.save_confusion_matrix(
         y_true_classes, no_lfg_y_pred_classes, label_encoder.classes_,
-        os.path.join(args.baseline_dir, f"{DATASET_NAME}_confusion_matrix_SA-DNN_no-LFG.csv"),
+        f"{DATASET_NAME} — SA-DNN (no LFG) Confusion Matrix",
+        os.path.join(args.baseline_dir, f"{DATASET_NAME}_confusion_matrix_SA-DNN_no-LFG.png"),
+    )
+
+    baselines.save_training_curves(
+        history, no_lfg_history, DATASET_NAME,
+        os.path.join(args.baseline_dir, f"{DATASET_NAME}_training_curves.png"),
     )
 
     baselines.run_comparison(
@@ -215,13 +232,26 @@ if not args.no_baselines:
         output_dir=args.baseline_dir,
     )
 
-# Explainability (SHAP + LIME)
+    # Explainability (SHAP + LIME) for the no-LFG ablation
+    if not args.no_explain:
+        explainability.explain_model(
+            model=no_lfg_model,
+            X_train=train_features.values,
+            X_test=test_features.values,
+            y_test=test_label_enc,
+            feature_names=train_features.columns.tolist(),
+            class_names=list(label_encoder.classes_),
+            output_dir=os.path.join(args.explain_dir, "SA-DNN_no-LFG"),
+        )
+
+# Explainability (SHAP + LIME) for the proposed SA-DNN-LFG model
 if not args.no_explain:
     explainability.explain_model(
         model=model,
         X_train=train_features.values,
         X_test=test_features.values,
+        y_test=test_label_enc,
         feature_names=train_features.columns.tolist(),
         class_names=list(label_encoder.classes_),
-        output_dir=args.explain_dir,
+        output_dir=os.path.join(args.explain_dir, "SA-DNN-LFG"),
     )

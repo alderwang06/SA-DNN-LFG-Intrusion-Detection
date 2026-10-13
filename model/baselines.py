@@ -3,7 +3,6 @@
 
 import os
 import time
-
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -14,7 +13,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import precision_recall_fscore_support, accuracy_score, confusion_matrix
+from sklearn.metrics import precision_recall_fscore_support, accuracy_score, ConfusionMatrixDisplay
 
 RANDOM = 42
 SVM_MAX_TRAIN_SAMPLES = 20_000  # SVC is O(n^2)-O(n^3); cap so it stays tractable on large datasets
@@ -67,12 +66,38 @@ def build_bilstm_attention(input_dim, num_classes):
     return model
 
 
-def save_confusion_matrix(y_true, y_pred, class_names, path):
-    cm = confusion_matrix(y_true, y_pred, labels=range(len(class_names)))
-    df = pd.DataFrame(cm, index=class_names, columns=class_names)
-    df.to_csv(path)
+def save_confusion_matrix(y_true, y_pred, class_names, title, path):
+    fig, ax = plt.subplots(figsize=(max(6, 0.6 * len(class_names)), max(5, 0.6 * len(class_names))))
+    disp = ConfusionMatrixDisplay.from_predictions(
+        y_true, y_pred, labels=range(len(class_names)), display_labels=class_names,
+        cmap='Blues', xticks_rotation='vertical', ax=ax, colorbar=True,
+    )
+    ax.set_title(title, fontweight='bold')
+    fig.tight_layout()
+    fig.savefig(path, dpi=200, bbox_inches='tight')
+    plt.close(fig)
     print(f"Saved confusion matrix to {path}")
-    return df
+    return disp.confusion_matrix
+
+
+def save_training_curves(history, no_lfg_history, dataset_name, path):
+    fig, ax = plt.subplots(figsize=(7, 5))
+    epochs_lfg = range(1, len(history.history['accuracy']) + 1)
+    epochs_no_lfg = range(1, len(no_lfg_history.history['accuracy']) + 1)
+
+    ax.plot(epochs_lfg, history.history['accuracy'], label='SA-DNN-LFG train', color='#1f77b4', linestyle='-')
+    ax.plot(epochs_lfg, history.history['val_accuracy'], label='SA-DNN-LFG val', color='#1f77b4', linestyle='--')
+    ax.plot(epochs_no_lfg, no_lfg_history.history['accuracy'], label='SA-DNN (no LFG) train', color='#ff7f0e', linestyle='-')
+    ax.plot(epochs_no_lfg, no_lfg_history.history['val_accuracy'], label='SA-DNN (no LFG) val', color='#ff7f0e', linestyle='--')
+
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Accuracy')
+    ax.set_title(f'{dataset_name} — Training/Validation Accuracy', fontweight='bold')
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(path, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Saved training curves to {path}")
 
 
 def _save_comparison_table_image(df, dataset_name, path):
@@ -149,6 +174,7 @@ def _train_sklearn_baseline(model, name, X_train, y_train, X_test, y_test, max_s
 def _train_keras_baseline(build_fn, name, input_dim, num_classes,
                            X_train, y_train_onehot, X_val, y_val_onehot,
                            X_test, y_test_enc, epochs, batch_size):
+    keras.utils.set_random_seed(RANDOM)  # isolate each baseline from TF's global random state
     model = build_fn(input_dim, num_classes)
     callbacks = [keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)]
 

@@ -2,9 +2,7 @@
 
 import os
 import pandas as pd
-import argparse
 from collections import Counter
-
 UNSW_DATASET = 'data/UNSW-NB15/'
 BOT_DATASET = 'data/BoT-IoT/'
 NBAIOT_DATASET = 'data/N-BaIoT'

@@ -3,7 +3,7 @@ from tensorflow import keras
 DROPOUT_RATE = 0.3
 NUM_ATTENTION_HEADS = 4
 LEARNING_RATE = 5e-4
-INITIALIZER = 'glorot_uniform'  # Xavier weight initialization
+INITIALIZER = 'glorot_uniform'
 
 def _build(input_dim, num_classes, use_lfg):
     inputs = keras.Input(shape=(input_dim,))
@@ -48,5 +48,4 @@ def build_model(input_dim, num_classes):
 
 
 def build_model_no_lfg(input_dim, num_classes):
-    """SA-DNN without the Learnable Feature Gating layer, for the paper's ablation comparison."""
-    return _build(input_dim, num_classes, use_lfg=False)
+        return _build(input_dim, num_classes, use_lfg=False)

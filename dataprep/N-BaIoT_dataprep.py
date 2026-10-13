@@ -3,9 +3,11 @@ import re
 import argparse
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
 
 RANDOM = 42
 TARGET = 100_000  # 100k samples per class
+TOP_K_FEATURES = 20  # Random Forest-based feature selection target
 
 # Get Dataset path
 parser = argparse.ArgumentParser()
@@ -133,6 +135,29 @@ data = pd.concat(
 print("\nSampled dataset:")
 print(data.shape)
 print(data['label'].value_counts())
+
+# Clean NaN/inf before feature selection (RF can't handle them)
+data = data.replace([np.inf, -np.inf], np.nan)
+na_counts = data.isna().sum()
+print("\nNaN counts before feature selection:")
+print(na_counts[na_counts > 0])
+data = data.fillna(0)
+
+# Random Forest-based Feature Selection, fit only on the train split so
+# val/test never influence which features get kept.
+feature_cols = [c for c in data.columns if c not in ('label', 'split')]
+train_rows = data[data['split'] == 'train']
+
+rf_selector = RandomForestClassifier(n_estimators=200, random_state=RANDOM, n_jobs=-1)
+rf_selector.fit(train_rows[feature_cols], train_rows['label'])
+
+importances = pd.Series(rf_selector.feature_importances_, index=feature_cols).sort_values(ascending=False)
+selected_features = importances.head(TOP_K_FEATURES).index.tolist()
+
+print(f"\nSelected {len(selected_features)} features via Random Forest importance:")
+print(selected_features)
+
+data = data[selected_features + ['label', 'split']]
 
 output_dir = os.path.dirname(args.output)
 if output_dir:

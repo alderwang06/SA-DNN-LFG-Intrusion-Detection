@@ -1,16 +1,20 @@
 # SA-DNN-LFG-Intrusion-Detection
 
 ## Overview
-This is an implementation of the interpretable intrusion detection model in IoT
-environments presented in the paper:
+This is an implementation and extension of the SA-DNN+LFG intrusion detection model with SHAP/LIME
+explainability features in IoT environments presented in the paper:
 [Interpretable intrusion detection for IoT environments using a self-attention-based explainable AI framework](https://www.nature.com/articles/s41598-025-23750-0).
 
 ## Datasets
 
 ### UNSW-NB15
-General-purpose network intrusion benchmark (~2.54M records, 49 features,
-10 classes: 1 benign + 9 attack categories). Already reasonably balanced
-across its major attack categories, so no resampling is applied.
+General-purpose network intrusion benchmark, using the pre-partitioned
+Kaggle train/test release (`UNSW_NB15_training-set.csv` +
+`testing-set.csv`, the same resource the paper links): 257,673 records
+total, 43 features, 10 classes (1 benign + 9 attack categories). This is
+severely imbalanced — Normal/Generic/Exploits alone are ~76% of the data,
+and Worms is only 174 rows (~0.07%) — but no resampling is applied here,
+matching the paper's stated approach for this dataset.
 
 ### BoT-IoT
 IoT-specific botnet attack traffic (~72M records, 46 features, 5 classes:
@@ -31,38 +35,29 @@ SA-DNN-LFG-Intrusion-Detection/
 │   ├── N-BaIoT/
 │   └── UNSW-NB15/
 │
-├── sa_dnn_lfg.py              # shared SA-DNN+LFG model architecture
-├── explainability.py          # shared SHAP + LIME explainability
-├── baselines.py                # shared Logistic Regression/SVM/RF/LSTM/CNN/BiLSTM+Attention comparison baselines
 ├── Bot-IoT_model.py
 ├── N-BaIoT_model.py
 ├── UNSW-NB15_model.py
+├── sa_dnn_lfg.py           # shared SA-DNN+LFG model architecture
+├── explainability.py       # shared SHAP + LIME explainability
+├── baselines.py            # shared Logistic Regression/SVM/RF/LSTM/CNN/BiLSTM+Attention comparison baselines
+├── Bot-IoT_dataprep.py
+├── N-BaIoT_dataprep.py
+├── UNSW-NB15_dataprep.py
+├── requirements.txt        # model dependencies
 └── README.md
 
 Install dependencies with `pip install -r requirements.txt`.
 
 ## Data Preparation
 
-For Bot-IoT and N-BaIoT, `Bot-IoT_datasample.py` / `N-BaIoT_datasample.py`
-first reduce the raw per-file dataset to a fixed number of samples per class
-(10k for Bot-IoT, 100k for N-BaIoT — N-BaIoT's target is confirmed directly
-from the paper text; BoT-IoT's isn't stated unambiguously in the paper, so
-10k was chosen to keep oversampling of its rarest class, Theft at ~1.6k raw
-rows, to a defensible ~6x rather than stretching a handful of real samples
-much further): a streaming reservoir sample keeps a uniform random subset of
-up to the target size per class as all source files are read (so majority
-classes are randomly undersampled without bias toward whichever file happens
-to be read first), and any class whose raw population falls short of the
-target is randomly oversampled (with replacement) back up to it — matching
-the paper's combined oversample-minority/undersample-majority approach,
-applied before the data is split.
+`Bot-IoT_dataprep.py` implements data preprocessing, data sampling, and feature selection for the Bot-IoT model.
 
-Each `*_model.py` script then loads its (already class-balanced, for Bot-IoT
-and N-BaIoT) dataset, splits it 70/15/15 (train/val/test, stratified),
-label-/one-hot-encodes targets, scales numeric features with `StandardScaler`,
-and reduces Bot-IoT/N-BaIoT to their top features (correlation-based for
-Bot-IoT, Random Forest importance for N-BaIoT); UNSW-NB15 keeps all original
-features and is not resampled, matching the paper.
+
+`N-BaIoT_dataprep.py` implements data preprocessing, data sampling, and feature selection for the N-BaIoT model.
+
+`UNSW-NB15_dataprep.py` implements data preprocessing, data sampling, and feature selection for the UNSW-NB15 model.
+
 
 ## Model Architecture
 

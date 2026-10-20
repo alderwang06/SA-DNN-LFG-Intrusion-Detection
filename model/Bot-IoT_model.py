@@ -59,6 +59,15 @@ train_data = data[data['split'] == 'train'].drop(columns=['split'])
 val_data = data[data['split'] == 'val'].drop(columns=['split'])
 test_data = data[data['split'] == 'test'].drop(columns=['split'])
 
+for split_name, split_df in [('train', train_data), ('val', val_data), ('test', test_data)]:
+    if len(split_df) == 0:
+        raise ValueError(
+            f"'{split_name}' split has 0 rows after filtering data['split'] == '{split_name}'. "
+            f"{DATASET_PATH} is likely an incomplete/truncated write (e.g. an interrupted "
+            f"Bot-IoT_dataprep.py run) -- check `pd.read_csv('{DATASET_PATH}')['split'].value_counts()` "
+            f"and regenerate it if any split is missing or far smaller than expected."
+        )
+
 print("\nClass counts after split:")
 print("Train:")
 print(train_data['category'].value_counts())

@@ -3,7 +3,6 @@ import argparse
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
-from imblearn.over_sampling import SMOTENC
 
 RANDOM = 42
 # Paper's exact BoT-IoT per-class resampling target is unverifiable (its "normal
@@ -14,7 +13,7 @@ TARGET = 10_000  # 10k samples per class
 TOP_K_FEATURES = 20  # correlation-based feature selection target
 REDUNDANCY_THRESHOLD = 0.95  # drop features this correlated with an already-kept feature
 LABEL_COLS = ['attack', 'category']
-CATEGORY_COLS = ['proto', 'state', 'flgs']  # passed to SMOTENC as nominal, not interpolated
+CATEGORY_COLS = ['proto', 'state', 'flgs']
 
 # Get Dataset path
 parser = argparse.ArgumentParser()
@@ -34,8 +33,8 @@ DATASET_FOLDER = args.dataset
 
 # saddr/daddr are raw IP identifiers (not generalizable statistical
 # features); smac/dmac/soui/doui/sco/dco are 100% NaN in this dataset.
-# Dropping both groups before SMOTE-NC runs means it never has to invent a
-# fake IP address or interpolate an empty column.
+# Dropped early so neither group gets carried through resampling for no
+# reason.
 DROP_COLS = [
     'pkSeqID', 'seq', 'subcategory', 'stime', 'ltime',
     'saddr', 'daddr', 'smac', 'dmac', 'soui', 'doui', 'sco', 'dco',
@@ -47,8 +46,8 @@ rng = np.random.default_rng(RANDOM)
 
 
 def parse_ports(series):
-    """sport/dport are read as strings and occasionally hex ('0x50'); SMOTENC
-    needs them numeric like every other continuous column. Vectorized over
+    """sport/dport are read as strings and occasionally hex ('0x50'); this
+    parses them numeric like every other continuous column. Vectorized over
     the whole column instead of a per-row .apply() -- across ~73M Bot-IoT
     rows, a Python-level function call per row (x2, for sport and dport) is
     the actual bottleneck in this script, not the number of files read."""
@@ -138,11 +137,9 @@ for category in CLASSES:
     }
 
 # Within each split, classes above target are randomly undersampled and
-# classes below target are SMOTE-NC-oversampled (categorical columns get
-# nearest-neighbor voting instead of interpolation) rather than randomly
-# duplicated. A synthetic row isn't an exact copy of any single real row,
-# so it can't itself leak a real test-set answer into training the way a
-# duplicate-with-replacement row could.
+# classes below target are oversampled with replacement, up to target. A
+# resampled row can then only ever land back in the split it came from, so
+# no row can appear in both train and test.
 parts = {}
 for split, target in SPLIT_TARGETS.items():
     split_df = pd.concat(
@@ -151,44 +148,15 @@ for split, target in SPLIT_TARGETS.items():
     )
     counts = split_df['category'].value_counts()
 
-    undersample_targets = {c for c, n in counts.items() if n > target}
-    if undersample_targets:
-        kept = []
-        for c, group in split_df.groupby('category'):
-            if c in undersample_targets:
-                group = group.sample(n=target, random_state=RANDOM)
-            kept.append(group)
-        split_df = pd.concat(kept, ignore_index=True)
-        counts = split_df['category'].value_counts()
+    resampled = []
+    for c, group in split_df.groupby('category'):
+        n = counts[c]
+        if n != target:
+            print(f"{split}/{c}: {n} raw rows, resampling to {target}")
+            group = group.sample(n=target, replace=n < target, random_state=RANDOM)
+        resampled.append(group)
 
-    oversample_targets = {c: target for c, n in counts.items() if n < target}
-    if oversample_targets:
-        print(f"{split}: SMOTE-NC oversampling {oversample_targets}")
-        y = split_df['category']
-        # 'attack' is fully determined by 'category' (0 for Normal, 1
-        # otherwise), so it's dropped here and re-derived after SMOTE rather
-        # than asking SMOTE-NC to keep two redundant targets consistent on
-        # synthetic rows.
-        X = split_df.drop(columns=['category', 'attack'])
-        categorical_idx = [X.columns.get_loc(c) for c in CATEGORY_COLS]
-        min_minority = min(counts[c] for c in oversample_targets)
-        k_neighbors = max(1, min(5, min_minority - 1))
-
-        smote = SMOTENC(
-            categorical_features=categorical_idx,
-            sampling_strategy=oversample_targets,
-            k_neighbors=k_neighbors,
-            random_state=RANDOM,
-        )
-        X_res, category_res = smote.fit_resample(X, y)
-
-        split_df = X_res
-        split_df['category'] = category_res
-        split_df['attack'] = (category_res != 'Normal').astype(int)
-    else:
-        split_df = split_df.reset_index(drop=True)
-
-    parts[split] = split_df
+    parts[split] = pd.concat(resampled, ignore_index=True)
 
 data = pd.concat(
     [df.assign(split=split) for split, df in parts.items()],

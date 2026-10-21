@@ -7,19 +7,7 @@ from sklearn.preprocessing import LabelEncoder
 from imblearn.over_sampling import SMOTENC
 
 RANDOM = 42
-# Real attack_cat distribution is far from the "already reasonably balanced"
-# assumption the paper makes for this dataset (Normal ~93k vs Worms ~174,
-# ~535x). A single shared target (like Bot-IoT/N-BaIoT use) doesn't translate
-# well here: Worms would need a ~500x+ oversample to reach Normal's scale, or
-# Normal would need a ~99% cut to reach Worms' scale -- both too extreme for
-# how little raw data this dataset has to begin with (257k rows total, vs.
-# Bot-IoT/N-BaIoT's tens of millions, where cutting a majority class down to
-# 10k barely dents it). Instead: undersample anything above CEILING and
-# SMOTE-NC-oversample anything below FLOOR; classes already inside the band
-# are left untouched. Applied independently within each split (after the
-# split, like Bot-IoT/N-BaIoT) so no duplicated/synthetic row can leak across
-# train/val/test.
-CEILING = 10_000
+CEILING = 10_000 # Max samples
 FLOOR = 1_000
 CATEGORY_COLS = ['proto', 'service', 'state']
 

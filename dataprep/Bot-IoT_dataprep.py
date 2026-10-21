@@ -46,18 +46,20 @@ KEY_COL = '_reservoir_key'
 rng = np.random.default_rng(RANDOM)
 
 
-def parse_port(x):
+def parse_ports(series):
     """sport/dport are read as strings and occasionally hex ('0x50'); SMOTENC
-    needs them numeric like every other continuous column."""
-    if pd.isna(x):
-        return np.nan
-    try:
-        x = str(x).strip()
-        if x.lower().startswith("0x"):
-            return int(x, 16)
-        return int(float(x))
-    except (ValueError, TypeError):
-        return np.nan
+    needs them numeric like every other continuous column. Vectorized over
+    the whole column instead of a per-row .apply() -- across ~73M Bot-IoT
+    rows, a Python-level function call per row (x2, for sport and dport) is
+    the actual bottleneck in this script, not the number of files read."""
+    s = series.astype(str).str.strip()
+    is_hex = s.str.lower().str.startswith('0x')
+
+    result = pd.to_numeric(s.where(~is_hex), errors='coerce')
+    if is_hex.any():
+        result.loc[is_hex] = s.loc[is_hex].apply(lambda v: int(v, 16))
+
+    return result.astype('float64')
 
 # Data Sampling: reservoir sampling keeps a uniform random sample of up to
 # TARGET rows per class as the full dataset streams past, regardless of file
@@ -76,15 +78,16 @@ for filename in sorted(os.listdir(DATASET_FOLDER)):
     for chunk in pd.read_csv(filepath, chunksize=100_000, low_memory=False):
         chunk.columns = chunk.columns.str.strip()
         chunk = chunk.drop(columns=DROP_COLS, errors='ignore')
-        chunk['sport'] = chunk['sport'].apply(parse_port)
-        chunk['dport'] = chunk['dport'].apply(parse_port)
+        chunk['sport'] = parse_ports(chunk['sport'])
+        chunk['dport'] = parse_ports(chunk['dport'])
         # remove NaN
         numeric_cols = chunk.select_dtypes(include=np.number).columns
         chunk[numeric_cols] = chunk[numeric_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
-        for category in CLASSES:
-            class_data = chunk[chunk['category'] == category]
-            if len(class_data) == 0:
+        # groupby once instead of re-scanning the whole chunk with a fresh
+        # boolean mask per class (5x over the same 100k-row chunk).
+        for category, class_data in chunk.groupby('category'):
+            if category not in CLASSES:
                 continue
 
             seen[category] += len(class_data)

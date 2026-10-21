@@ -31,11 +31,34 @@ parser.add_argument(
 args = parser.parse_args()
 DATASET_FOLDER = args.dataset
 
-DROP_COLS = ['pkSeqID', 'seq', 'subcategory', 'stime', 'ltime']
+# saddr/daddr are raw IP identifiers (not generalizable statistical
+# features); smac/dmac/soui/doui/sco/dco are 100% NaN in this dataset.
+# Dropped early so neither group gets carried through resampling for no
+# reason.
+DROP_COLS = [
+    'pkSeqID', 'seq', 'subcategory', 'stime', 'ltime',
+    'saddr', 'daddr', 'smac', 'dmac', 'soui', 'doui', 'sco', 'dco',
+]
 CLASSES = ['Reconnaissance', 'Normal', 'DoS', 'Theft', 'DDoS']
 KEY_COL = '_reservoir_key'
 
 rng = np.random.default_rng(RANDOM)
+
+
+def parse_ports(series):
+    """sport/dport are read as strings and occasionally hex ('0x50'); this
+    parses them numeric like every other continuous column. Vectorized over
+    the whole column instead of a per-row .apply() -- across ~73M Bot-IoT
+    rows, a Python-level function call per row (x2, for sport and dport) is
+    the actual bottleneck in this script, not the number of files read."""
+    s = series.astype(str).str.strip()
+    is_hex = s.str.lower().str.startswith('0x')
+
+    result = pd.to_numeric(s.where(~is_hex), errors='coerce')
+    if is_hex.any():
+        result.loc[is_hex] = s.loc[is_hex].apply(lambda v: int(v, 16))
+
+    return result.astype('float64')
 
 # Data Sampling: reservoir sampling keeps a uniform random sample of up to
 # TARGET rows per class as the full dataset streams past, regardless of file
@@ -54,10 +77,16 @@ for filename in sorted(os.listdir(DATASET_FOLDER)):
     for chunk in pd.read_csv(filepath, chunksize=100_000, low_memory=False):
         chunk.columns = chunk.columns.str.strip()
         chunk = chunk.drop(columns=DROP_COLS, errors='ignore')
+        chunk['sport'] = parse_ports(chunk['sport'])
+        chunk['dport'] = parse_ports(chunk['dport'])
+        # remove NaN
+        numeric_cols = chunk.select_dtypes(include=np.number).columns
+        chunk[numeric_cols] = chunk[numeric_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
-        for category in CLASSES:
-            class_data = chunk[chunk['category'] == category]
-            if len(class_data) == 0:
+        # groupby once instead of re-scanning the whole chunk with a fresh
+        # boolean mask per class (5x over the same 100k-row chunk).
+        for category, class_data in chunk.groupby('category'):
+            if category not in CLASSES:
                 continue
 
             seen[category] += len(class_data)
@@ -74,12 +103,11 @@ for filename in sorted(os.listdir(DATASET_FOLDER)):
     print("Rows seen so far:", seen)
 
 # Split each class's deduplicated pool into train/val/test *before* any
-# oversampling, then oversample (with replacement, up to the paper's target)
-# independently within each split. A duplicated row can then only ever land
-# back in the split it was duplicated from, so no row can appear in both
-# train and test (the previous oversample-then-split order allowed that,
-# which let models like Random Forest "memorize" test rows they'd also
-# seen, exact duplicate, in training).
+# resampling, then under/oversample independently within each split. A
+# resampled row can then only ever land back in the split it came from, so
+# no row can appear in both train and test (the previous oversample-then-
+# split order allowed that, which let models like Random Forest "memorize"
+# test rows they'd also seen, exact duplicate, in training).
 SPLIT_RATIOS = {'train': 0.70, 'val': 0.15, 'test': 0.15}
 SPLIT_TARGETS = {
     'train': round(TARGET * SPLIT_RATIOS['train']),
@@ -87,7 +115,7 @@ SPLIT_TARGETS = {
 }
 SPLIT_TARGETS['test'] = TARGET - SPLIT_TARGETS['train'] - SPLIT_TARGETS['val']
 
-parts = {split: [] for split in SPLIT_RATIOS}
+raw_splits_by_category = {}
 for category in CLASSES:
     if reservoirs[category] is None:
         print(f"Warning: no rows found for category {category}, skipping")
@@ -102,47 +130,42 @@ for category in CLASSES:
 
     n_train = int(round(len(pool) * SPLIT_RATIOS['train']))
     n_val = int(round(len(pool) * SPLIT_RATIOS['val']))
-    raw_splits = {
+    raw_splits_by_category[category] = {
         'train': pool.iloc[:n_train],
         'val': pool.iloc[n_train:n_train + n_val],
         'test': pool.iloc[n_train + n_val:],
     }
 
-    for split, split_df in raw_splits.items():
-        target = SPLIT_TARGETS[split]
-        if len(split_df) != target:
-            print(f"{category}/{split}: {len(split_df)} raw rows, resampling to {target}")
-            split_df = split_df.sample(n=target, replace=len(split_df) < target, random_state=RANDOM)
-        parts[split].append(split_df)
+# Within each split, classes above target are randomly undersampled and
+# classes below target are oversampled with replacement, up to target. A
+# resampled row can then only ever land back in the split it came from, so
+# no row can appear in both train and test.
+parts = {}
+for split, target in SPLIT_TARGETS.items():
+    split_df = pd.concat(
+        [raw_splits_by_category[c][split].assign(category=c) for c in raw_splits_by_category],
+        ignore_index=True,
+    )
+    counts = split_df['category'].value_counts()
+
+    resampled = []
+    for c, group in split_df.groupby('category'):
+        n = counts[c]
+        if n != target:
+            print(f"{split}/{c}: {n} raw rows, resampling to {target}")
+            group = group.sample(n=target, replace=n < target, random_state=RANDOM)
+        resampled.append(group)
+
+    parts[split] = pd.concat(resampled, ignore_index=True)
 
 data = pd.concat(
-    [df.assign(split=split) for split, dfs in parts.items() for df in dfs],
+    [df.assign(split=split) for split, df in parts.items()],
     ignore_index=True,
 )
 
 print("\nSampled dataset:")
 print(data.shape)
 print(data['category'].value_counts())
-
-# Data Preprocessing: hex->decimal ports, drop raw IPs, encode categorical
-# features, clean NaN/inf -- all fit only on the train split so val/test
-# never influence encoders or feature selection.
-def parse_port(x):
-    if pd.isna(x):
-        return np.nan
-    try:
-        x = str(x).strip()
-        if x.lower().startswith("0x"):
-            return int(x, 16)
-        return int(float(x))
-    except (ValueError, TypeError):
-        return np.nan
-
-data['sport'] = data['sport'].apply(parse_port)
-data['dport'] = data['dport'].apply(parse_port)
-
-# Raw IP addresses are identifiers, not generalizable statistical features
-data = data.drop(columns=['saddr', 'daddr'])
 
 train_mask = data['split'] == 'train'
 

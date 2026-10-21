@@ -78,6 +78,9 @@ for filename in sorted(os.listdir(DATASET_FOLDER)):
         chunk = chunk.drop(columns=DROP_COLS, errors='ignore')
         chunk['sport'] = chunk['sport'].apply(parse_port)
         chunk['dport'] = chunk['dport'].apply(parse_port)
+        # remove NaN
+        numeric_cols = chunk.select_dtypes(include=np.number).columns
+        chunk[numeric_cols] = chunk[numeric_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
         for category in CLASSES:
             class_data = chunk[chunk['category'] == category]

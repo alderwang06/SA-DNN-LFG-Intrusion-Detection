@@ -5,12 +5,8 @@ import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 
 RANDOM = 42
-# Paper's exact BoT-IoT per-class resampling target is unverifiable (its "normal
-# traffic dominates" oversampling example doesn't match BoT-IoT's real class
-# counts, where Normal/Theft are the rare classes). 10k keeps oversampling of
-# the rarest class (Theft, ~1.6k raw rows) at a defensible ~6x rather than ~46x.
-TARGET = 10_000  # 10k samples per class
-TOP_K_FEATURES = 20  # correlation-based feature selection target
+TARGET = 30_000
+TOP_K_FEATURES = 20  # correlation-based feature selection
 REDUNDANCY_THRESHOLD = 0.95  # drop features this correlated with an already-kept feature
 LABEL_COLS = ['attack', 'category']
 CATEGORY_COLS = ['proto', 'state', 'flgs']
@@ -31,10 +27,6 @@ parser.add_argument(
 args = parser.parse_args()
 DATASET_FOLDER = args.dataset
 
-# saddr/daddr are raw IP identifiers (not generalizable statistical
-# features); smac/dmac/soui/doui/sco/dco are 100% NaN in this dataset.
-# Dropped early so neither group gets carried through resampling for no
-# reason.
 DROP_COLS = [
     'pkSeqID', 'seq', 'subcategory', 'stime', 'ltime',
     'saddr', 'daddr', 'smac', 'dmac', 'soui', 'doui', 'sco', 'dco',
@@ -46,11 +38,6 @@ rng = np.random.default_rng(RANDOM)
 
 
 def parse_ports(series):
-    """sport/dport are read as strings and occasionally hex ('0x50'); this
-    parses them numeric like every other continuous column. Vectorized over
-    the whole column instead of a per-row .apply() -- across ~73M Bot-IoT
-    rows, a Python-level function call per row (x2, for sport and dport) is
-    the actual bottleneck in this script, not the number of files read."""
     s = series.astype(str).str.strip()
     is_hex = s.str.lower().str.startswith('0x')
 
@@ -60,10 +47,7 @@ def parse_ports(series):
 
     return result.astype('float64')
 
-# Data Sampling: reservoir sampling keeps a uniform random sample of up to
-# TARGET rows per class as the full dataset streams past, regardless of file
-# order, so classes with more than TARGET raw rows are randomly undersampled
-# without the greedy first-N-rows-encountered bias of a single-chunk sample.
+# keep uniform random sample per label
 reservoirs = {c: None for c in CLASSES}
 seen = {c: 0 for c in CLASSES}
 
@@ -83,8 +67,6 @@ for filename in sorted(os.listdir(DATASET_FOLDER)):
         numeric_cols = chunk.select_dtypes(include=np.number).columns
         chunk[numeric_cols] = chunk[numeric_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
-        # groupby once instead of re-scanning the whole chunk with a fresh
-        # boolean mask per class (5x over the same 100k-row chunk).
         for category, class_data in chunk.groupby('category'):
             if category not in CLASSES:
                 continue
@@ -102,18 +84,9 @@ for filename in sorted(os.listdir(DATASET_FOLDER)):
 
     print("Rows seen so far:", seen)
 
-# Split each class's deduplicated pool into train/val/test *before* any
-# resampling, then under/oversample independently within each split. A
-# resampled row can then only ever land back in the split it came from, so
-# no row can appear in both train and test (the previous oversample-then-
-# split order allowed that, which let models like Random Forest "memorize"
-# test rows they'd also seen, exact duplicate, in training).
+# oversample/undersample after split
 SPLIT_RATIOS = {'train': 0.70, 'val': 0.15, 'test': 0.15}
-SPLIT_TARGETS = {
-    'train': round(TARGET * SPLIT_RATIOS['train']),
-    'val': round(TARGET * SPLIT_RATIOS['val']),
-}
-SPLIT_TARGETS['test'] = TARGET - SPLIT_TARGETS['train'] - SPLIT_TARGETS['val']
+TRAIN_TARGET = round(TARGET * SPLIT_RATIOS['train'])
 
 raw_splits_by_category = {}
 for category in CLASSES:
@@ -122,9 +95,7 @@ for category in CLASSES:
         continue
 
     pool = reservoirs[category].drop(columns=[KEY_COL])
-    # Drop exact-duplicate raw rows (e.g. repetitive benign heartbeat traffic)
-    # before splitting, so a duplicate that already existed in the raw data
-    # can't get scattered across train/val/test by chance.
+    # drop exact duplicates
     pool = pool.drop_duplicates().reset_index(drop=True)
     pool = pool.sample(frac=1, random_state=RANDOM).reset_index(drop=True)
 
@@ -136,27 +107,29 @@ for category in CLASSES:
         'test': pool.iloc[n_train + n_val:],
     }
 
-# Within each split, classes above target are randomly undersampled and
-# classes below target are oversampled with replacement, up to target. A
-# resampled row can then only ever land back in the split it came from, so
-# no row can appear in both train and test.
+# only training set is resampled to target samples
 parts = {}
-for split, target in SPLIT_TARGETS.items():
+for split in SPLIT_RATIOS:
     split_df = pd.concat(
         [raw_splits_by_category[c][split].assign(category=c) for c in raw_splits_by_category],
         ignore_index=True,
     )
-    counts = split_df['category'].value_counts()
 
-    resampled = []
-    for c, group in split_df.groupby('category'):
-        n = counts[c]
-        if n != target:
-            print(f"{split}/{c}: {n} raw rows, resampling to {target}")
-            group = group.sample(n=target, replace=n < target, random_state=RANDOM)
-        resampled.append(group)
+    if split == 'train':
+        counts = split_df['category'].value_counts()
+        resampled = []
+        for c, group in split_df.groupby('category'):
+            n = counts[c]
+            if n > TRAIN_TARGET:
+                print(f"train/{c}: {n} raw rows, undersampling to {TRAIN_TARGET}")
+                group = group.sample(n=TRAIN_TARGET, random_state=RANDOM)
+            resampled.append(group)
+        split_df = pd.concat(resampled, ignore_index=True)
+    else:
+        print(f"\n{split}: keeping real class distribution (no resampling)")
+        print(split_df['category'].value_counts())
 
-    parts[split] = pd.concat(resampled, ignore_index=True)
+    parts[split] = split_df
 
 data = pd.concat(
     [df.assign(split=split) for split, df in parts.items()],
@@ -165,7 +138,7 @@ data = pd.concat(
 
 print("\nSampled dataset:")
 print(data.shape)
-print(data['category'].value_counts())
+print(data.groupby('split')['category'].value_counts())
 
 train_mask = data['split'] == 'train'
 
@@ -188,13 +161,8 @@ print("\nNaN counts before feature selection:")
 print(na_counts[na_counts > 0])
 data = data.fillna(0)
 
-# Correlation-based Feature Selection (CFS), fit only on the train split
+# Correlation-based Feature Selection (CFS)
 def select_features_by_correlation(X, y, top_k, redundancy_threshold):
-    # Zero-variance (constant, e.g. all-NaN-then-filled-to-0) columns have
-    # undefined correlation with anything -- corr() gives NaN, and
-    # "NaN > redundancy_threshold" is always False, so a constant column
-    # can never be flagged as redundant and silently fills a selected slot
-    # despite carrying zero information. Drop them from candidacy entirely.
     constant_cols = X.columns[X.std() == 0]
     if len(constant_cols) > 0:
         print(f"Dropping {len(constant_cols)} zero-variance columns from CFS candidacy: {constant_cols.tolist()}")
@@ -202,11 +170,6 @@ def select_features_by_correlation(X, y, top_k, redundancy_threshold):
 
     corr_matrix = X.corr().abs()
 
-    # y is label-encoded (arbitrary integer per class), which has no ordinal
-    # meaning across a 5-class target. Correlating directly against it would
-    # implicitly treat "class 3 > class 1" as meaningful. Instead, correlate
-    # each feature against a one-hot indicator per class and keep the
-    # strongest per-class association as that feature's relevance score.
     y_onehot = pd.get_dummies(pd.Series(y, index=X.index))
     per_class_corr = pd.DataFrame({cls: X.corrwith(y_onehot[cls]) for cls in y_onehot.columns})
     target_corr = per_class_corr.abs().max(axis=1).fillna(0)

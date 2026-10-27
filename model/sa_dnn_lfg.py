@@ -26,7 +26,7 @@ def _build(input_dim, num_classes, use_lfg):
 
     if use_lfg:
         # Learnable Feature Gating
-        gate = keras.layers.Dense(64, activation='sigmoid', kernel_initializer=INITIALIZER)(ff)
+        gate = keras.layers.Dense(ff.shape[-1], activation='sigmoid', kernel_initializer=INITIALIZER, name='lfg_gate')(ff)
         ff = keras.layers.Multiply()([gate, ff])
 
     bn = keras.layers.BatchNormalization()(ff)
@@ -48,4 +48,4 @@ def build_model(input_dim, num_classes):
 
 
 def build_model_no_lfg(input_dim, num_classes):
-        return _build(input_dim, num_classes, use_lfg=False)
+    return _build(input_dim, num_classes, use_lfg=False)

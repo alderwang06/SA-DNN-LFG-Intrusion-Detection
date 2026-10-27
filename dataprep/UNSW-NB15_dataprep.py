@@ -6,6 +6,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
 RANDOM = 42
+TARGET = 30_000
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -21,8 +23,7 @@ parser.add_argument(
 
 args = parser.parse_args()
 DATASET_FOLDER = args.dataset
-
-DROP_COLS = ['id']  # row identifier, not a generalizable statistical feature
+DROP_COLS = ['id']
 
 data1 = pd.read_csv(os.path.join(DATASET_FOLDER, 'UNSW_NB15_training-set.csv'))
 data2 = pd.read_csv(os.path.join(DATASET_FOLDER, 'UNSW_NB15_testing-set.csv'))
@@ -33,21 +34,31 @@ print("Loaded dataset:")
 print(data.shape)
 print(data['attack_cat'].value_counts())
 
-# Drop exact-duplicate raw rows so a duplicate that already exists in the
-# raw data can't get scattered across train/val/test by chance.
+# drop exact duplicat
 before = len(data)
 data = data.drop_duplicates().reset_index(drop=True)
 print(f"\nDropped {before - len(data)} duplicate rows")
 
-# No oversampling/undersampling is applied here -- UNSW-NB15 is used as-is,
-# matching the paper's stated approach for this dataset. Just a stratified
-# 70/15/15 train/val/test split.
 train_data, temp_data = train_test_split(
     data, test_size=0.3, stratify=data['attack_cat'], random_state=RANDOM
 )
 val_data, test_data = train_test_split(
     temp_data, test_size=0.5, stratify=temp_data['attack_cat'], random_state=RANDOM
 )
+
+# Only the train split is resampled: classes above TARGET are randomly
+# undersampled to TARGET; classes below TARGET keep their original count
+# (no oversampling). val/test are left untouched, keeping the real class
+# distribution for an honest evaluation.
+counts = train_data['attack_cat'].value_counts()
+resampled = []
+for cls, group in train_data.groupby('attack_cat'):
+    n = counts[cls]
+    if n > TARGET:
+        print(f"train/{cls}: {n} raw rows, undersampling to {TARGET}")
+        group = group.sample(n=TARGET, random_state=RANDOM)
+    resampled.append(group)
+train_data = pd.concat(resampled, ignore_index=True)
 
 train_data = train_data.assign(split='train')
 val_data = val_data.assign(split='val')

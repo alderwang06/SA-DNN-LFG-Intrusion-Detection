@@ -13,7 +13,9 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import precision_recall_fscore_support, accuracy_score, ConfusionMatrixDisplay
+from sklearn.metrics import (
+    precision_recall_fscore_support, accuracy_score, ConfusionMatrixDisplay, classification_report,
+)
 
 RANDOM = 42
 SVM_MAX_TRAIN_SAMPLES = 20_000  # SVC is O(n^2)-O(n^3); cap so it stays tractable on large datasets
@@ -66,18 +68,39 @@ def build_bilstm_attention(input_dim, num_classes):
     return model
 
 
-def save_confusion_matrix(y_true, y_pred, class_names, title, path):
+def save_confusion_matrix(y_true, y_pred, class_names, title, path, accuracy=None):
     fig, ax = plt.subplots(figsize=(max(6, 0.6 * len(class_names)), max(5, 0.6 * len(class_names))))
     disp = ConfusionMatrixDisplay.from_predictions(
         y_true, y_pred, labels=range(len(class_names)), display_labels=class_names,
         cmap='Blues', xticks_rotation='vertical', ax=ax, colorbar=True,
     )
-    ax.set_title(title, fontweight='bold')
+    if accuracy is None:
+        accuracy = accuracy_score(y_true, y_pred)
+    ax.set_title(f"{title}\nAccuracy: {accuracy:.4f}", fontweight='bold')
     fig.tight_layout()
     fig.savefig(path, dpi=200, bbox_inches='tight')
     plt.close(fig)
     print(f"Saved confusion matrix to {path}")
     return disp.confusion_matrix
+
+
+def save_classification_report(y_true, y_pred, class_names, path, accuracy=None):
+    report = classification_report(
+        y_true, y_pred, target_names=class_names, output_dict=True, zero_division=0,
+    )
+    if accuracy is None:
+        accuracy = report.pop('accuracy')
+    else:
+        report.pop('accuracy')
+
+    df = pd.DataFrame(report).transpose()
+    df.loc['accuracy'] = {
+        'precision': accuracy, 'recall': accuracy, 'f1-score': accuracy,
+        'support': df.loc['weighted avg', 'support'],
+    }
+    df.to_csv(path)
+    print(f"Saved classification report to {path}")
+    return df
 
 
 def save_training_curves(history, no_lfg_history, dataset_name, path):

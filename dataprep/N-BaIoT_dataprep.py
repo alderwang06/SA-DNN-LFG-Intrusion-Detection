@@ -6,8 +6,8 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 
 RANDOM = 42
-TARGET = 100_000  # 100k samples per class
-TOP_K_FEATURES = 20  # Random Forest-based feature selection target
+TARGET = 50_000
+TOP_K_FEATURES = 20  # Random Forest-based feature selection
 
 # Get Dataset path
 parser = argparse.ArgumentParser()
@@ -50,11 +50,7 @@ def parse_device_and_label(filename):
 
 rng = np.random.default_rng(RANDOM)
 
-# Data Sampling: restricted to a single device's files (see --device), since
-# the paper trains/evaluates on one device (Danmini Doorbell) rather than
-# pooling traffic across all 9 N-BaIoT devices. Reservoir sampling keeps a
-# uniform random sample of up to TARGET rows per label from that device's
-# file.
+# keep uniform random sample per label
 reservoirs = {c: None for c in CLASSES}
 seen = {c: 0 for c in CLASSES}
 
@@ -85,19 +81,9 @@ for filename in sorted(os.listdir(DATASET_FOLDER)):
 
     print("Rows seen so far:", seen)
 
-# Split each class's deduplicated pool into train/val/test *before* any
-# oversampling, then oversample (with replacement, up to the paper's target)
-# independently within each split. A duplicated row can then only ever land
-# back in the split it was duplicated from, so no row can appear in both
-# train and test (the previous oversample-then-split order allowed that,
-# which let models like Random Forest "memorize" test rows they'd also
-# seen, exact duplicate, in training).
+# oversample/undersample after split
 SPLIT_RATIOS = {'train': 0.70, 'val': 0.15, 'test': 0.15}
-SPLIT_TARGETS = {
-    'train': round(TARGET * SPLIT_RATIOS['train']),
-    'val': round(TARGET * SPLIT_RATIOS['val']),
-}
-SPLIT_TARGETS['test'] = TARGET - SPLIT_TARGETS['train'] - SPLIT_TARGETS['val']
+TRAIN_TARGET = round(TARGET * SPLIT_RATIOS['train'])
 
 parts = {split: [] for split in SPLIT_RATIOS}
 for label in CLASSES:
@@ -106,9 +92,7 @@ for label in CLASSES:
         continue
 
     pool = reservoirs[label].drop(columns=[KEY_COL])
-    # Drop exact-duplicate raw rows (e.g. repetitive benign heartbeat traffic)
-    # before splitting, so a duplicate that already existed in the raw data
-    # can't get scattered across train/val/test by chance.
+    # drop exact duplicates
     pool = pool.drop_duplicates().reset_index(drop=True)
     pool = pool.sample(frac=1, random_state=RANDOM).reset_index(drop=True)
 
@@ -121,10 +105,12 @@ for label in CLASSES:
     }
 
     for split, split_df in raw_splits.items():
-        target = SPLIT_TARGETS[split]
-        if len(split_df) != target:
-            print(f"{label}/{split}: {len(split_df)} raw rows, resampling to {target}")
-            split_df = split_df.sample(n=target, replace=len(split_df) < target, random_state=RANDOM)
+        if split == 'train' and len(split_df) != TRAIN_TARGET:
+            action = 'undersampling' if len(split_df) > TRAIN_TARGET else 'oversampling (with replacement)'
+            print(f"{label}/train: {len(split_df)} raw rows, {action} to {TRAIN_TARGET}")
+            split_df = split_df.sample(
+                n=TRAIN_TARGET, replace=len(split_df) < TRAIN_TARGET, random_state=RANDOM,
+            )
         parts[split].append(split_df)
 
 data = pd.concat(
@@ -134,17 +120,16 @@ data = pd.concat(
 
 print("\nSampled dataset:")
 print(data.shape)
-print(data['label'].value_counts())
+print(data.groupby('split')['label'].value_counts())
 
-# Clean NaN/inf before feature selection (RF can't handle them)
+# remove NaN/inf before feature selection
 data = data.replace([np.inf, -np.inf], np.nan)
 na_counts = data.isna().sum()
 print("\nNaN counts before feature selection:")
 print(na_counts[na_counts > 0])
 data = data.fillna(0)
 
-# Random Forest-based Feature Selection, fit only on the train split so
-# val/test never influence which features get kept.
+# Random forest-based feature selection
 feature_cols = [c for c in data.columns if c not in ('label', 'split')]
 train_rows = data[data['split'] == 'train']
 

@@ -160,6 +160,12 @@ baselines.save_confusion_matrix(
     y_true_classes, y_pred_classes, label_encoder.classes_,
     f"{DATASET_NAME} — SA-DNN-LFG Confusion Matrix",
     os.path.join(args.baseline_dir, f"{DATASET_NAME}_confusion_matrix_SA-DNN-LFG.png"),
+    accuracy=test_accuracy,
+)
+baselines.save_classification_report(
+    y_true_classes, y_pred_classes, label_encoder.classes_,
+    os.path.join(args.baseline_dir, f"{DATASET_NAME}_classification_report_SA-DNN-LFG.csv"),
+    accuracy=test_accuracy,
 )
 
 precision_macro, recall_macro, f1_macro, _ = precision_recall_fscore_support(
@@ -212,6 +218,12 @@ if not args.no_baselines:
         y_true_classes, no_lfg_y_pred_classes, label_encoder.classes_,
         f"{DATASET_NAME} — SA-DNN (no LFG) Confusion Matrix",
         os.path.join(args.baseline_dir, f"{DATASET_NAME}_confusion_matrix_SA-DNN_no-LFG.png"),
+        accuracy=no_lfg_test_accuracy,
+    )
+    baselines.save_classification_report(
+        y_true_classes, no_lfg_y_pred_classes, label_encoder.classes_,
+        os.path.join(args.baseline_dir, f"{DATASET_NAME}_classification_report_SA-DNN_no-LFG.csv"),
+        accuracy=no_lfg_test_accuracy,
     )
 
     baselines.save_training_curves(

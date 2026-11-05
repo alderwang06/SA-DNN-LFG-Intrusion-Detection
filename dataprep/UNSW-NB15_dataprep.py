@@ -6,8 +6,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
 RANDOM = 42
-TARGET = 30_000
-
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -45,18 +43,6 @@ train_data, temp_data = train_test_split(
 val_data, test_data = train_test_split(
     temp_data, test_size=0.5, stratify=temp_data['attack_cat'], random_state=RANDOM
 )
-
-# only train is resampled to TARGET; val/test keep the real distribution
-counts = train_data['attack_cat'].value_counts()
-resampled = []
-for cls, group in train_data.groupby('attack_cat'):
-    n = counts[cls]
-    if n != TARGET:
-        action = 'undersampling' if n > TARGET else 'oversampling (with replacement)'
-        print(f"train/{cls}: {n} raw rows, {action} to {TARGET}")
-        group = group.sample(n=TARGET, replace=n < TARGET, random_state=RANDOM)
-    resampled.append(group)
-train_data = pd.concat(resampled, ignore_index=True)
 
 train_data = train_data.assign(split='train')
 val_data = val_data.assign(split='val')

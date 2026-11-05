@@ -6,7 +6,6 @@ import argparse
 from tensorflow import keras
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
-from sklearn.utils.class_weight import compute_class_weight
 
 import sa_dnn_lfg
 import baselines
@@ -95,11 +94,6 @@ test_label_onehot = keras.utils.to_categorical(test_label_enc, num_classes=num_c
 
 input_dim = train_features.shape[1]
 
-# offset UNSW-NB15's class imbalance since dataprep applies no oversampling
-class_weight = dict(enumerate(compute_class_weight(
-    'balanced', classes=np.arange(num_classes), y=train_label_enc,
-)))
-
 # Train Model
 keras.utils.set_random_seed(RANDOM)  # isolate LFG vs no-LFG comparison from TF's global random state
 model = sa_dnn_lfg.build_model(input_dim, num_classes)
@@ -117,7 +111,6 @@ history = model.fit(
     epochs=50,
     batch_size=64,
     callbacks=callbacks,
-    class_weight=class_weight,
 )
 train_time_s = time.time() - train_start
 
@@ -170,7 +163,6 @@ if not args.no_baselines:
         train_features.values, train_label_onehot,
         validation_data=(val_features.values, val_label_onehot),
         epochs=50, batch_size=64, callbacks=no_lfg_callbacks,
-        class_weight=class_weight,
     )
     no_lfg_train_time_s = time.time() - no_lfg_train_start
 

@@ -81,9 +81,8 @@ for filename in sorted(os.listdir(DATASET_FOLDER)):
 
     print("Rows seen so far:", seen)
 
-# oversample/undersample after split
+# split per label, no resampling -- imbalance is handled via class_weight at train time
 SPLIT_RATIOS = {'train': 0.70, 'val': 0.15, 'test': 0.15}
-TRAIN_TARGET = round(TARGET * SPLIT_RATIOS['train'])
 
 parts = {split: [] for split in SPLIT_RATIOS}
 for label in CLASSES:
@@ -105,12 +104,6 @@ for label in CLASSES:
     }
 
     for split, split_df in raw_splits.items():
-        if split == 'train' and len(split_df) != TRAIN_TARGET:
-            action = 'undersampling' if len(split_df) > TRAIN_TARGET else 'oversampling (with replacement)'
-            print(f"{label}/train: {len(split_df)} raw rows, {action} to {TRAIN_TARGET}")
-            split_df = split_df.sample(
-                n=TRAIN_TARGET, replace=len(split_df) < TRAIN_TARGET, random_state=RANDOM,
-            )
         parts[split].append(split_df)
 
 data = pd.concat(

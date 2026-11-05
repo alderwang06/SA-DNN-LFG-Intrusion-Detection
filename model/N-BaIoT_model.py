@@ -7,6 +7,7 @@ from tensorflow import keras
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
+from sklearn.utils.class_weight import compute_class_weight
 
 import sa_dnn_lfg
 import baselines
@@ -123,6 +124,10 @@ print("RF acc, rows not in train:", (rf_pred[~in_train] == test_label_enc[~in_tr
 if args.leak_check_only:
     raise SystemExit(0)
 
+class_weight = dict(enumerate(compute_class_weight(
+    'balanced', classes=np.arange(num_classes), y=train_label_enc,
+)))
+
 # Train Model
 keras.utils.set_random_seed(RANDOM)  # isolate LFG vs no-LFG comparison from TF's global random state
 model = sa_dnn_lfg.build_model(input_dim, num_classes)
@@ -139,7 +144,8 @@ history = model.fit(
     validation_data=(val_features.values, val_label_onehot),
     epochs=50,
     batch_size=64,
-    callbacks=callbacks
+    callbacks=callbacks,
+    class_weight=class_weight,
 )
 train_time_s = time.time() - train_start
 
@@ -192,6 +198,7 @@ if not args.no_baselines:
         train_features.values, train_label_onehot,
         validation_data=(val_features.values, val_label_onehot),
         epochs=50, batch_size=64, callbacks=no_lfg_callbacks,
+        class_weight=class_weight,
     )
     no_lfg_train_time_s = time.time() - no_lfg_train_start
 

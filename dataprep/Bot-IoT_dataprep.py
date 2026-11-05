@@ -84,9 +84,8 @@ for filename in sorted(os.listdir(DATASET_FOLDER)):
 
     print("Rows seen so far:", seen)
 
-# oversample/undersample after split
+# split per category, no resampling -- imbalance is handled via class_weight at train time
 SPLIT_RATIOS = {'train': 0.70, 'val': 0.15, 'test': 0.15}
-TRAIN_TARGET = round(TARGET * SPLIT_RATIOS['train'])
 
 raw_splits_by_category = {}
 for category in CLASSES:
@@ -107,30 +106,13 @@ for category in CLASSES:
         'test': pool.iloc[n_train + n_val:],
     }
 
-# only training set is resampled to target samples
-parts = {}
-for split in SPLIT_RATIOS:
-    split_df = pd.concat(
+parts = {
+    split: pd.concat(
         [raw_splits_by_category[c][split].assign(category=c) for c in raw_splits_by_category],
         ignore_index=True,
     )
-
-    if split == 'train':
-        counts = split_df['category'].value_counts()
-        resampled = []
-        for c, group in split_df.groupby('category'):
-            n = counts[c]
-            if n != TRAIN_TARGET:
-                action = 'undersampling' if n > TRAIN_TARGET else 'oversampling (with replacement)'
-                print(f"train/{c}: {n} raw rows, {action} to {TRAIN_TARGET}")
-                group = group.sample(n=TRAIN_TARGET, replace=n < TRAIN_TARGET, random_state=RANDOM)
-            resampled.append(group)
-        split_df = pd.concat(resampled, ignore_index=True)
-    else:
-        print(f"\n{split}: keeping real class distribution (no resampling)")
-        print(split_df['category'].value_counts())
-
-    parts[split] = split_df
+    for split in SPLIT_RATIOS
+}
 
 data = pd.concat(
     [df.assign(split=split) for split, df in parts.items()],

@@ -46,17 +46,15 @@ val_data, test_data = train_test_split(
     temp_data, test_size=0.5, stratify=temp_data['attack_cat'], random_state=RANDOM
 )
 
-# Only the train split is resampled: classes above TARGET are randomly
-# undersampled to TARGET; classes below TARGET keep their original count
-# (no oversampling). val/test are left untouched, keeping the real class
-# distribution for an honest evaluation.
+# only train is resampled to TARGET; val/test keep the real distribution
 counts = train_data['attack_cat'].value_counts()
 resampled = []
 for cls, group in train_data.groupby('attack_cat'):
     n = counts[cls]
-    if n > TARGET:
-        print(f"train/{cls}: {n} raw rows, undersampling to {TARGET}")
-        group = group.sample(n=TARGET, random_state=RANDOM)
+    if n != TARGET:
+        action = 'undersampling' if n > TARGET else 'oversampling (with replacement)'
+        print(f"train/{cls}: {n} raw rows, {action} to {TARGET}")
+        group = group.sample(n=TARGET, replace=n < TARGET, random_state=RANDOM)
     resampled.append(group)
 train_data = pd.concat(resampled, ignore_index=True)
 

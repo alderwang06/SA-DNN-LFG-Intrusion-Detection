@@ -105,9 +105,12 @@ for label in CLASSES:
     }
 
     for split, split_df in raw_splits.items():
-        if split == 'train' and len(split_df) > TRAIN_TARGET:
-            print(f"{label}/train: {len(split_df)} raw rows, undersampling to {TRAIN_TARGET}")
-            split_df = split_df.sample(n=TRAIN_TARGET, random_state=RANDOM)
+        if split == 'train' and len(split_df) != TRAIN_TARGET:
+            action = 'undersampling' if len(split_df) > TRAIN_TARGET else 'oversampling (with replacement)'
+            print(f"{label}/train: {len(split_df)} raw rows, {action} to {TRAIN_TARGET}")
+            split_df = split_df.sample(
+                n=TRAIN_TARGET, replace=len(split_df) < TRAIN_TARGET, random_state=RANDOM,
+            )
         parts[split].append(split_df)
 
 data = pd.concat(

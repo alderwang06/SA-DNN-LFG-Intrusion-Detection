@@ -120,9 +120,10 @@ for split in SPLIT_RATIOS:
         resampled = []
         for c, group in split_df.groupby('category'):
             n = counts[c]
-            if n > TRAIN_TARGET:
-                print(f"train/{c}: {n} raw rows, undersampling to {TRAIN_TARGET}")
-                group = group.sample(n=TRAIN_TARGET, random_state=RANDOM)
+            if n != TRAIN_TARGET:
+                action = 'undersampling' if n > TRAIN_TARGET else 'oversampling (with replacement)'
+                print(f"train/{c}: {n} raw rows, {action} to {TRAIN_TARGET}")
+                group = group.sample(n=TRAIN_TARGET, replace=n < TRAIN_TARGET, random_state=RANDOM)
             resampled.append(group)
         split_df = pd.concat(resampled, ignore_index=True)
     else:

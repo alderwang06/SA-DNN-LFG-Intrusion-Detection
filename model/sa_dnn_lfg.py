@@ -4,6 +4,7 @@ DROPOUT_RATE = 0.3
 NUM_ATTENTION_HEADS = 4
 LEARNING_RATE = 5e-4
 INITIALIZER = 'glorot_uniform'
+FOCAL_GAMMA = 2.0
 
 def _build(input_dim, num_classes, use_lfg):
     inputs = keras.Input(shape=(input_dim,))
@@ -37,7 +38,7 @@ def _build(input_dim, num_classes, use_lfg):
     model = keras.Model(inputs=inputs, outputs=outputs)
     model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=LEARNING_RATE),
-        loss='categorical_crossentropy',
+        loss=keras.losses.CategoricalFocalCrossentropy(gamma=FOCAL_GAMMA),
         metrics=['accuracy']
     )
     return model

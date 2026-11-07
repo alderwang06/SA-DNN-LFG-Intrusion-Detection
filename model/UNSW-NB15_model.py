@@ -30,6 +30,11 @@ parser.add_argument(
     help="Skip SHAP/LIME explainability"
 )
 parser.add_argument(
+    "--overview-only", action="store_true",
+    help="Only generate the SHAP/LIME overview outputs (feature importance bar chart, "
+         "overall waterfall/LIME explanation), skipping the per-class breakdowns"
+)
+parser.add_argument(
     "--explain-dir", default=f"explainability_output/{DATASET_NAME}",
     help="Directory to write SHAP/LIME plots to"
 )
@@ -228,4 +233,5 @@ if not args.no_explain:
         feature_names=train_features.columns.tolist(),
         class_names=list(label_encoder.classes_),
         output_dir=os.path.join(args.explain_dir, "SA-DNN-LFG"),
+        overview_only=args.explain_overview_only,
     )

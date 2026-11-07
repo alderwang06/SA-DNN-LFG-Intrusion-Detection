@@ -71,8 +71,29 @@ def _run_shap(predict_fn, X_train, X_test, feature_names, class_names,
     plt.savefig(os.path.join(output_dir, "shap_waterfall_overall.png"), dpi=150)
     plt.close()
 
+    importances = np.abs(shap_values.values).mean(axis=(0, 2))
+    _plot_feature_importance_bar(
+        importances, feature_names, "Mean |SHAP value| per feature",
+        os.path.join(output_dir, "shap_feature_importance_bar.png"),
+    )
+
     print(f"[SHAP] Saved plots to {output_dir}")
     return shap_values
+
+
+def _plot_feature_importance_bar(importances, feature_names, title, path, top_k=20):
+    order = np.argsort(importances)[::-1][:top_k]
+    names = [feature_names[i] for i in order][::-1]
+    values = importances[order][::-1]
+
+    fig, ax = plt.subplots(figsize=(8, max(4, 0.3 * len(order))))
+    ax.barh(names, values)
+    ax.set_xlabel("Mean |SHAP value|")
+    ax.set_title(title, fontweight='bold')
+    fig.tight_layout()
+    fig.savefig(path, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+    print(f"[SHAP] Saved feature importance bar chart to {path}")
 
 # LIME used for local instance explainability
 def _run_lime(predict_fn, X_train, X_test, y_test, feature_names, class_names,

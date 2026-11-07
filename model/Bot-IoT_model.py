@@ -248,22 +248,11 @@ if not args.no_baselines:
         X_val=val_features.values, y_val_onehot=val_label_onehot,
         X_test=test_features.values, y_test_enc=test_label_enc,
         num_classes=num_classes,
+        class_names=list(label_encoder.classes_),
         sa_dnn_lfg_metrics=sa_dnn_lfg_metrics,
         no_lfg_metrics=no_lfg_metrics,
         output_dir=args.baseline_dir,
     )
-
-    # Explainability (SHAP + LIME) for the no-LFG ablation
-    if not args.no_explain:
-        explainability.explain_model(
-            model=no_lfg_model,
-            X_train=train_features.values,
-            X_test=test_features.values,
-            y_test=test_label_enc,
-            feature_names=train_features.columns.tolist(),
-            class_names=list(label_encoder.classes_),
-            output_dir=os.path.join(args.explain_dir, "SA-DNN_no-LFG"),
-        )
 
 # Explainability (SHAP + LIME) for the proposed SA-DNN-LFG model
 if not args.no_explain:

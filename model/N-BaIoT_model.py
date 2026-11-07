@@ -157,7 +157,9 @@ inference_ms_per_sample = (time.time() - inference_start) / len(test_features) *
 y_pred_classes = np.argmax(y_pred, axis=1)
 y_true_classes = np.argmax(test_label_onehot, axis=1)
 
-print(classification_report(y_true_classes, y_pred_classes, target_names=label_encoder.classes_))
+print(classification_report(
+    y_true_classes, y_pred_classes, labels=np.arange(num_classes), target_names=label_encoder.classes_,
+))
 print(confusion_matrix(y_true_classes, y_pred_classes))
 
 os.makedirs(args.baseline_dir, exist_ok=True)

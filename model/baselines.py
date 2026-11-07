@@ -70,7 +70,8 @@ def save_confusion_matrix(y_true, y_pred, class_names, title, path, accuracy=Non
 
 def save_classification_report(y_true, y_pred, class_names, path, accuracy=None):
     report = classification_report(
-        y_true, y_pred, target_names=class_names, output_dict=True, zero_division=0,
+        y_true, y_pred, labels=np.arange(len(class_names)), target_names=class_names,
+        output_dict=True, zero_division=0,
     )
     if accuracy is None:
         accuracy = report.pop('accuracy')

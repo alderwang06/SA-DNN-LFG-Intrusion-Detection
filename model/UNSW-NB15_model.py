@@ -233,5 +233,5 @@ if not args.no_explain:
         feature_names=train_features.columns.tolist(),
         class_names=list(label_encoder.classes_),
         output_dir=os.path.join(args.explain_dir, "SA-DNN-LFG"),
-        overview_only=args.explain_overview_only,
+        overview_only=args.overview_only,
     )

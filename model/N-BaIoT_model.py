@@ -4,7 +4,7 @@ import argparse
 import numpy as np
 import pandas as pd
 from tensorflow import keras
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.preprocessing import StandardScaler, QuantileTransformer, LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
 
@@ -84,11 +84,23 @@ test_label = test_data['label']
 
 numeric = train_features.columns  # already RF-selected in N-BaIoT_dataprep.py
 
-# Data Scaling
+# Data Scaling -- HH_jit_*_mean tracks elapsed position within a capture
+# session rather than real jitter (see N-BaIoT_dataprep.py), so its tcp/udp
+# signal is a tiny fraction of its StandardScaler-scaled spread. Rank-based
+# QuantileTransformer preserves that signal instead of burying it.
+jit_cols = [c for c in numeric if c.startswith('HH_jit')]
+other_cols = [c for c in numeric if c not in jit_cols]
+
 scaler = StandardScaler()
-train_features[numeric] = scaler.fit_transform(train_features[numeric])
-val_features[numeric] = scaler.transform(val_features[numeric])
-test_features[numeric] = scaler.transform(test_features[numeric])
+train_features[other_cols] = scaler.fit_transform(train_features[other_cols])
+val_features[other_cols] = scaler.transform(val_features[other_cols])
+test_features[other_cols] = scaler.transform(test_features[other_cols])
+
+if jit_cols:
+    jit_scaler = QuantileTransformer(output_distribution='uniform', random_state=RANDOM)
+    train_features[jit_cols] = jit_scaler.fit_transform(train_features[jit_cols])
+    val_features[jit_cols] = jit_scaler.transform(val_features[jit_cols])
+    test_features[jit_cols] = jit_scaler.transform(test_features[jit_cols])
 
 print(f'Train: {train_features.shape}  Val: {val_features.shape}  Test: {test_features.shape}')
 

@@ -6,7 +6,7 @@ LEARNING_RATE = 5e-4
 INITIALIZER = 'glorot_uniform'
 FOCAL_GAMMA = 2.0
 
-def _build(input_dim, num_classes, use_lfg):
+def _build(input_dim, num_classes, use_lfg, use_focal_loss=False):
     inputs = keras.Input(shape=(input_dim,))
     x = keras.layers.Dense(128, activation='relu', kernel_initializer=INITIALIZER)(inputs)
     x = keras.layers.Dropout(DROPOUT_RATE)(x)
@@ -35,18 +35,20 @@ def _build(input_dim, num_classes, use_lfg):
     clf = keras.layers.Dense(16, activation='relu', kernel_initializer=INITIALIZER)(bn)
     outputs = keras.layers.Dense(num_classes, activation='softmax', kernel_initializer=INITIALIZER)(clf)
 
+    loss = keras.losses.CategoricalFocalCrossentropy(gamma=FOCAL_GAMMA) if use_focal_loss else 'categorical_crossentropy'
+
     model = keras.Model(inputs=inputs, outputs=outputs)
     model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=LEARNING_RATE),
-        loss=keras.losses.CategoricalFocalCrossentropy(gamma=FOCAL_GAMMA),
+        loss=loss,
         metrics=['accuracy']
     )
     return model
 
 
-def build_model(input_dim, num_classes):
-    return _build(input_dim, num_classes, use_lfg=True)
+def build_model(input_dim, num_classes, use_focal_loss=False):
+    return _build(input_dim, num_classes, use_lfg=True, use_focal_loss=use_focal_loss)
 
 
-def build_model_no_lfg(input_dim, num_classes):
-    return _build(input_dim, num_classes, use_lfg=False)
+def build_model_no_lfg(input_dim, num_classes, use_focal_loss=False):
+    return _build(input_dim, num_classes, use_lfg=False, use_focal_loss=use_focal_loss)

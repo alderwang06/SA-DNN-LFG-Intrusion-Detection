@@ -37,6 +37,10 @@ parser.add_argument(
     "--baseline-dir", default="baseline_results",
     help="Directory to write baseline comparison CSVs to"
 )
+parser.add_argument(
+    "--focal-loss", action="store_true",
+    help="Use focal loss instead of plain categorical_crossentropy, as an imbalance-handling experiment"
+)
 
 args = parser.parse_args()
 DATASET_PATH = args.dataset
@@ -96,7 +100,7 @@ input_dim = train_features.shape[1]
 
 # Train Model
 keras.utils.set_random_seed(RANDOM)  # isolate LFG vs no-LFG comparison from TF's global random state
-model = sa_dnn_lfg.build_model(input_dim, num_classes)
+model = sa_dnn_lfg.build_model(input_dim, num_classes, use_focal_loss=args.focal_loss)
 model.summary()
 
 callbacks = [
@@ -155,7 +159,7 @@ sa_dnn_lfg_metrics = {
 # + SA-DNN (no LFG) ablation, matching the paper's LFG contribution analysis
 if not args.no_baselines:
     keras.utils.set_random_seed(RANDOM)
-    no_lfg_model = sa_dnn_lfg.build_model_no_lfg(input_dim, num_classes)
+    no_lfg_model = sa_dnn_lfg.build_model_no_lfg(input_dim, num_classes, use_focal_loss=args.focal_loss)
     no_lfg_callbacks = [keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)]
 
     no_lfg_train_start = time.time()

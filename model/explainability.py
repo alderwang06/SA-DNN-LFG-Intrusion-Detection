@@ -22,6 +22,7 @@ def explain_model(
     background_size=100,
     shap_sample_size=200,
     lime_num_features=10,
+    lime_samples_per_class=50,
     random_state=RANDOM,
     overview_only=False,
 ):
@@ -37,7 +38,7 @@ def explain_model(
     )
     _run_lime(
         predict_fn, X_train, X_test, y_test, feature_names, class_names,
-        output_dir, lime_num_features, random_state, overview_only,
+        output_dir, lime_num_features, lime_samples_per_class, random_state, overview_only,
     )
     return shap_values
 
@@ -105,7 +106,7 @@ def _plot_feature_importance_bar(importances, feature_names, title, path, top_k=
 
 # LIME used for local instance explainability
 def _run_lime(predict_fn, X_train, X_test, y_test, feature_names, class_names,
-              output_dir, lime_num_features, random_state, overview_only):
+              output_dir, lime_num_features, lime_samples_per_class, random_state, overview_only):
     print(f"\n[LIME] Building explainer...")
     lime_explainer = LimeTabularExplainer(
         X_train,
@@ -134,19 +135,83 @@ def _run_lime(predict_fn, X_train, X_test, y_test, feature_names, class_names,
             )
             plt.close(fig)
 
-    # One overall explanation, for a single representative instance (its top predicted label)
-    exp = lime_explainer.explain_instance(
-        X_test[0], predict_fn, num_features=lime_num_features, top_labels=1,
+    # LIME use stratified average with 50 samples per class
+    _plot_lime_overview(
+        lime_explainer, predict_fn, X_test, y_test, feature_names, class_names,
+        lime_num_features, lime_samples_per_class, random_state, output_dir,
     )
-    top_label = exp.top_labels[0]
-    fig = exp.as_pyplot_figure(label=top_label)
-    fig.savefig(
-        os.path.join(output_dir, "lime_overall.png"),
-        dpi=150, bbox_inches="tight",
-    )
-    plt.close(fig)
 
     print(f"[LIME] Saved explanations to {output_dir}")
+
+
+def _compute_lime_class_importances(lime_explainer, predict_fn, X_test, y_test,
+                                     feature_names, class_names, lime_samples_per_class, random_state):
+    n_classes = len(class_names)
+    n_features = len(feature_names)
+    rng = np.random.RandomState(random_state)
+
+    imp_signed = np.zeros((n_classes, n_features))
+    imp_abs = np.zeros((n_classes, n_features))
+    cnt = np.zeros(n_classes)
+
+    for class_idx, class_name in enumerate(class_names):
+        matches = np.flatnonzero(y_test == class_idx)
+        if len(matches) == 0:
+            print(f"[LIME] No test instances found for class {class_name}, skipping")
+            continue
+
+        n_sample = min(lime_samples_per_class, len(matches))
+        sampled = rng.choice(matches, size=n_sample, replace=False)
+        print(f"[LIME] Averaging over {n_sample} test instances for class {class_name}...")
+
+        for idx in sampled:
+            exp = lime_explainer.explain_instance(
+                X_test[idx], predict_fn, num_features=n_features, labels=(class_idx,),
+            )
+            for f, w in exp.as_map()[class_idx]:
+                imp_signed[class_idx, f] += w
+                imp_abs[class_idx, f] += abs(w)
+        cnt[class_idx] = n_sample
+
+    denom = np.maximum(cnt, 1)[:, None]
+    imp_signed = imp_signed / denom
+    imp_abs = imp_abs / denom
+    return imp_signed, imp_abs, cnt
+
+
+def _plot_lime_overview(lime_explainer, predict_fn, X_test, y_test, feature_names, class_names,
+                        lime_num_features, lime_samples_per_class, random_state, output_dir):
+    imp_signed, imp_abs, cnt = _compute_lime_class_importances(
+        lime_explainer, predict_fn, X_test, y_test, feature_names, class_names,
+        lime_samples_per_class, random_state,
+    )
+
+    n_classes = len(class_names)
+    fig, axes = plt.subplots(n_classes, 1, figsize=(8, 2.2 * n_classes))
+    axes = np.atleast_1d(axes)
+
+    for class_idx, (class_name, ax) in enumerate(zip(class_names, axes)):
+        if cnt[class_idx] == 0:
+            ax.axis('off')
+            ax.set_title(f"{class_name}: no test instances", fontsize=9)
+            continue
+
+        order = np.argsort(imp_abs[class_idx])[::-1][:lime_num_features][::-1]
+        names = [feature_names[i] for i in order]
+        weights = imp_signed[class_idx, order]
+        colors = ['#d62728' if w < 0 else '#2ca02c' for w in weights]
+
+        ax.barh(names, weights, color=colors)
+        ax.axvline(0, color='black', linewidth=0.8)
+        ax.set_title(f"{class_name} (n={int(cnt[class_idx])})", fontsize=9, fontweight='bold')
+        ax.tick_params(axis='both', labelsize=7)
+
+    fig.suptitle("LIME — mean feature importance per class (stratified sample)", fontweight='bold')
+    fig.tight_layout()
+    path = os.path.join(output_dir, "lime_overview_all_classes.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[LIME] Saved all-classes overview to {path}")
 
 def check_shap_agreement(predict_fn, shap_values, X_explain, background,
                          feature_names, k=10, n_check=20):

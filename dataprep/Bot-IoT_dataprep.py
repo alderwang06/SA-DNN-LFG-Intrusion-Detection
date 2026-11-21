@@ -31,7 +31,8 @@ DROP_COLS = [
     'pkSeqID', 'seq', 'subcategory', 'stime', 'ltime',
     'saddr', 'daddr', 'smac', 'dmac', 'soui', 'doui', 'sco', 'dco',
 ]
-CLASSES = ['Reconnaissance', 'Normal', 'DoS', 'Theft', 'DDoS']
+CLASSES = ['Reconnaissance', 'Normal', 'DoS', 'Theft']  # DDoS merged into DoS below
+CATEGORY_MERGE = {'DDoS': 'DoS'}
 KEY_COL = '_reservoir_key'
 
 rng = np.random.default_rng(RANDOM)
@@ -66,6 +67,8 @@ for filename in sorted(os.listdir(DATASET_FOLDER)):
         # remove NaN
         numeric_cols = chunk.select_dtypes(include=np.number).columns
         chunk[numeric_cols] = chunk[numeric_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
+
+        chunk['category'] = chunk['category'].replace(CATEGORY_MERGE)
 
         for category, class_data in chunk.groupby('category'):
             if category not in CLASSES:

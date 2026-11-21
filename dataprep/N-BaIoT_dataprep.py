@@ -35,9 +35,10 @@ DEVICE = args.device
 
 CLASSES = [
     'benign',
-    'gafgyt_combo', 'gafgyt_junk', 'gafgyt_scan', 'gafgyt_tcp', 'gafgyt_udp',
+    'gafgyt_combo', 'gafgyt_junk', 'gafgyt_scan', 'gafgyt_tcp_udp',
     'mirai_ack', 'mirai_scan', 'mirai_syn', 'mirai_udp', 'mirai_udpplain'
 ]
+LABEL_MERGE = {'gafgyt_tcp': 'gafgyt_tcp_udp', 'gafgyt_udp': 'gafgyt_tcp_udp'}
 
 LABEL_PATTERN = re.compile(r'^(\d+)\.(.+)\.csv$')
 KEY_COL = '_reservoir_key'
@@ -46,7 +47,9 @@ def parse_device_and_label(filename):
     match = LABEL_PATTERN.match(filename)
     if not match:
         return None, None
-    return match.group(1), match.group(2).replace('.', '_')
+    label = match.group(2).replace('.', '_')
+    label = LABEL_MERGE.get(label, label)
+    return match.group(1), label
 
 rng = np.random.default_rng(RANDOM)
 

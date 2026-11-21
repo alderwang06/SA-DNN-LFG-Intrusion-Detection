@@ -81,19 +81,43 @@ for filename in sorted(os.listdir(DATASET_FOLDER)):
 
     print("Rows seen so far:", seen)
 
-# oversample/undersample after split
+full_pool = pd.concat(
+    [df.drop(columns=[KEY_COL]) for df in reservoirs.values() if df is not None],
+    ignore_index=True,
+)
+
+full_pool = full_pool.replace([np.inf, -np.inf], np.nan)
+na_counts = full_pool.isna().sum()
+print("\nNaN counts before feature selection:")
+print(na_counts[na_counts > 0])
+full_pool = full_pool.fillna(0)
+
+feature_cols = [c for c in full_pool.columns if c != 'label']
+
+rf_selector = RandomForestClassifier(n_estimators=200, random_state=RANDOM, n_jobs=-1)
+rf_selector.fit(full_pool[feature_cols], full_pool['label'])
+
+importances = pd.Series(rf_selector.feature_importances_, index=feature_cols).sort_values(ascending=False)
+selected_features = importances.head(TOP_K_FEATURES).index.tolist()
+
+print(f"\nSelected {len(selected_features)} features via Random Forest importance:")
+print(selected_features)
+
+full_pool = full_pool[selected_features + ['label']]
+
+# dedup (on the selected-feature space) + split + oversample/undersample
 SPLIT_RATIOS = {'train': 0.70, 'val': 0.15, 'test': 0.15}
 TRAIN_TARGET = round(TARGET * SPLIT_RATIOS['train'])
 
 parts = {split: [] for split in SPLIT_RATIOS}
 for label in CLASSES:
-    if reservoirs[label] is None:
+    label_pool = full_pool[full_pool['label'] == label]
+    if len(label_pool) == 0:
         print(f"Warning: no rows found for label {label}, skipping")
         continue
 
-    pool = reservoirs[label].drop(columns=[KEY_COL])
-    # drop exact duplicates
-    pool = pool.drop_duplicates().reset_index(drop=True)
+    # drop exact duplicates (on the final selected-feature columns)
+    pool = label_pool.drop_duplicates().reset_index(drop=True)
     pool = pool.sample(frac=1, random_state=RANDOM).reset_index(drop=True)
 
     n_train = int(round(len(pool) * SPLIT_RATIOS['train']))
@@ -121,28 +145,6 @@ data = pd.concat(
 print("\nSampled dataset:")
 print(data.shape)
 print(data.groupby('split')['label'].value_counts())
-
-# remove NaN/inf before feature selection
-data = data.replace([np.inf, -np.inf], np.nan)
-na_counts = data.isna().sum()
-print("\nNaN counts before feature selection:")
-print(na_counts[na_counts > 0])
-data = data.fillna(0)
-
-# Random forest-based feature selection
-feature_cols = [c for c in data.columns if c not in ('label', 'split')]
-train_rows = data[data['split'] == 'train']
-
-rf_selector = RandomForestClassifier(n_estimators=200, random_state=RANDOM, n_jobs=-1)
-rf_selector.fit(train_rows[feature_cols], train_rows['label'])
-
-importances = pd.Series(rf_selector.feature_importances_, index=feature_cols).sort_values(ascending=False)
-selected_features = importances.head(TOP_K_FEATURES).index.tolist()
-
-print(f"\nSelected {len(selected_features)} features via Random Forest importance:")
-print(selected_features)
-
-data = data[selected_features + ['label', 'split']]
 
 output_dir = os.path.dirname(args.output)
 if output_dir:
